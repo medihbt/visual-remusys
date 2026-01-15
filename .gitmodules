@@ -1,0 +1,6 @@
+[submodule "remusys-ir"]
+	path = remusys-ir
+	url = https://github.com/medihbt/remusys-ir
+[submodule "remusys-lang"]
+	path = remusys-lang
+	url = https://gitee.com/medihbt/remusys-lang
