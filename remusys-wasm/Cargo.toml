@@ -1,0 +1,21 @@
+[package]
+name = "remusys-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = true
+opt-level = "s"
+
+[dependencies]
+remusys-ir = { path = "../remusys-ir" }
+remusys-lang = { path = "../remusys-lang" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+smallvec = { version = "1.15", features = ["serde", "union"] }
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+
