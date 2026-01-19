@@ -1,0 +1,13 @@
+[package]
+name = "remusys-ir-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hexf-parse = "0.2.1"
+logos = "0.16.0"
+remusys-ir = { path = "../remusys-ir" }
+smallvec = { version = "1.15.1", features = ["union"] }
+smol_str = "0.3.5"
+thiserror = "2.0.17"
+
