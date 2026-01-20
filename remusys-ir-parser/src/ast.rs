@@ -316,7 +316,7 @@ mod value {
     use std::sync::Arc;
 
     use crate::{
-        ast::{AstNode, Ident, TypeAst},
+        ast::{AstNode, TypeAst},
         parse_err,
         parser::{IRParseRes, IRParser},
         tokens::FinalToken,
@@ -406,7 +406,7 @@ mod value {
                 FinalToken::LBracket | FinalToken::LBrace | FinalToken::LAngle => {
                     Aggr::parse(parser).map(|a| a.into())
                 }
-                token => parse_err!(Unmatch span0, "invalid syntax for Operand"),
+                _ => parse_err!(Unmatch span0, "invalid syntax for Operand"),
             }
         }
     }
@@ -595,15 +595,74 @@ mod value {
             })
         }
     }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Label {
+        pub span: logos::Span,
+        pub name: SmolStr,
+    }
+
+    impl AstNode for Label {
+        fn get_span(&self) -> logos::Span {
+            self.span.clone()
+        }
+
+        fn repr(&self) -> String {
+            let Self { span, name } = self;
+            format!("label {name:?} ({span:?})")
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let begin_pos = parser
+                .advance_exact(&[FinalToken::lit_word("label")])?
+                .start;
+            match parser.peek0()? {
+                (FinalToken::PIdent(id), span) => {
+                    parser.advance_n(1)?;
+                    Ok(Self {
+                        span: begin_pos..span.end,
+                        name: id,
+                    })
+                }
+                (tok, span) => {
+                    parse_err!(Unmatch begin_pos..span.end, "label requires 'label %id' but got tokens [Label, {tok:?}]")
+                }
+            }
+        }
+    }
 }
+
+pub use inst::*;
+mod inst;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn ast_test_common<T: AstNode>(inputs: &[&str]) {
+        struct ParserErr<'a>(&'a IRParser<'a>, IRParseErr);
+
+        impl<'a> Debug for ParserErr<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let Self(parser, err) = self;
+                parser.print_fmt_err(err, f)
+            }
+        }
+
+        for &input in inputs {
+            let mut parser = IRParser::new(input);
+            match T::parse(&mut parser) {
+                Ok(t) => println!("parse({input:?}) => {t:#?}"),
+                Err(err) => {
+                    panic!("{:?}", ParserErr(&parser, err))
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_type_parsing() {
-        let types = [
+        ast_test_common::<TypeAst>(&[
             "i1",
             "i8",
             "i32",
@@ -614,23 +673,12 @@ mod tests {
             "{ i8, [ 3 x i8 ], i32 }",
             "[ 30 x ptr ]",
             "[ 10 x %MyStruct ]",
-        ];
-
-        for tyname in types {
-            let mut parser = IRParser::new(tyname);
-            match TypeAst::parse(&mut parser) {
-                Ok(ty) => println!("parse({tyname:?}) => {ty:#?}"),
-                Err(err) => {
-                    parser.print_err(&err, &mut std::io::stdout()).unwrap();
-                    break;
-                }
-            }
-        }
+        ]);
     }
 
     #[test]
     fn test_value_parsing() {
-        let values = [
+        ast_test_common::<Operand>(&[
             "10",
             "false",
             "true",
@@ -639,16 +687,20 @@ mod tests {
             "[ i32 1, i32 2, i32 3 ]",
             "{ i32 10, [4 x i8] zeroinitialzier, i64 20 }",
             r#"c"Hello, world""#,
-        ];
-        for value in values {
-            let mut parser = IRParser::new(value);
-            match Operand::parse(&mut parser) {
-                Ok(op) => println!("parse({value:?}) = {op:#?}"),
-                Err(err) => {
-                    parser.print_err(&err, &mut std::io::stdout()).unwrap();
-                    break;
-                }
-            }
-        }
+        ]);
+    }
+
+    #[test]
+    fn test_inst_parsing() {
+        ast_test_common::<InstAst>(&[
+            "unreachable",
+            "%init = alloca i32",
+            "%val = load i32, ptr %init, align 4",
+            r#"switch i32 %val, label %default, [
+                i32 0, label %case0
+                i32 1, label %case1
+                i32 2, label %case2
+            ]"#
+        ]);
     }
 }

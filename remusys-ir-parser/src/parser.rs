@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::tokens::{FinalToken, IRLexer};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum IRParseErrKind {
     #[error("lexical error: {0}")]
     Lexical(String),
@@ -15,6 +15,9 @@ pub enum IRParseErrKind {
 
     #[error("type error: fix vector type element should be int or float")]
     TypeErrInvalidVecElem,
+
+    #[error("inst error: condition operand requires `i1` type")]
+    InstErrInvalidCondType,
 }
 
 #[derive(Debug)]
@@ -74,6 +77,12 @@ macro_rules! parse_err {
             span: $span
         })
     };
+    (InstErrInvalidCondType $span:expr) => {
+        Err($crate::parser::IRParseErr {
+            kind: $crate::parser::IRParseErrKind::InstErrInvalidCondType,
+            span: $span
+        })
+    };
 }
 
 pub struct IRParser<'src> {
@@ -125,6 +134,21 @@ impl<'src> IRParser<'src> {
         err: &IRParseErr,
         write: &mut dyn std::io::Write,
     ) -> std::io::Result<()> {
+        let IRParseErr {
+            kind,
+            span: Range { start, end },
+        } = err;
+        let line = self.line_pos.binary_search(start).unwrap_or_else(|x| x);
+        writeln!(write, "========== [begin parser error] ==========")?;
+        writeln!(write, "at source pos {start}..{end} (line {line}): {kind}")?;
+        writeln!(write, "{}", &self.get_source()[*start..*end])?;
+        writeln!(write, "=========== [end parser error] ===========")
+    }
+    pub fn print_fmt_err(
+        &self,
+        err: &IRParseErr,
+        write: &mut dyn std::fmt::Write,
+    ) -> std::fmt::Result {
         let IRParseErr {
             kind,
             span: Range { start, end },
