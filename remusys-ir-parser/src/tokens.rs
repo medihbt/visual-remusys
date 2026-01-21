@@ -41,13 +41,15 @@ enum PrimToken<'lex> {
     Word(&'lex str),
 
     #[regex(r":")]
-    Semi,
+    Colon,
     #[regex(r",")]
     Comma,
     #[regex(r"!")]
     Exclaim,
-    #[regex(r"..=")]
+    #[regex(r"\.\.=")]
     DotDotEq,
+    #[regex(r"\.\.\.")]
+    Ellipsis,
     #[regex(r"=")]
     Eq,
 
@@ -80,7 +82,7 @@ enum PrimToken<'lex> {
 
 impl<'lex> PrimToken<'lex> {
     fn parse_dec_int(s: &str) -> i128 {
-        i128::from_str_radix(s, 10).expect("invalid dec int")
+        s.parse::<i128>().expect("invalid dec int")
     }
     fn parse_hex_int(input: &str) -> i128 {
         if input.is_empty() {
@@ -135,9 +137,9 @@ impl<'lex> PrimToken<'lex> {
         hexf_parse::parse_hexf64(lex, false).map_err(|e| e.to_string())
     }
 
-    pub fn to_final(self) -> Result<FinalToken, String> {
+    pub fn into_final(self) -> Result<FinalToken, String> {
         use PrimToken::*;
-        let res = match self.clone() {
+        let res = match self {
             Word(s) => match Self::str_as_keyword(s) {
                 Some(s) => FinalToken::lit_word(s),
                 None => FinalToken::Word(SmolStr::new(s)),
@@ -154,11 +156,12 @@ impl<'lex> PrimToken<'lex> {
             }
             LitFPHex0(fs) | LitFPHex1(fs) => FinalToken::LitFP(Self::parse_hex_fp(fs)?),
 
-            LineComment | Space => panic!("Invalid token {self:?}"),
-            Semi => FinalToken::Semi,
+            LineComment | Space => panic!("Invalid token LineComment or Space"),
+            Colon => FinalToken::Colon,
             Comma => FinalToken::Comma,
             Exclaim => FinalToken::Exclaim,
             DotDotEq => FinalToken::DotDotEq,
+            Ellipsis => FinalToken::Ellipsis,
             Eq => FinalToken::Eq,
             LParen => FinalToken::LParen,
             RParen => FinalToken::RParen,
@@ -221,22 +224,37 @@ pub enum FinalToken {
     /// words / keywords
     Word(SmolStr),
 
-    Semi,
+    /// punctuation ':'
+    Colon,
+    /// punctuation ','
     Comma,
+    /// punctuation '!'
     Exclaim,
+    /// punctuation '..='
     DotDotEq,
+    /// punctuation '...'
+    Ellipsis,
+    /// punctuation '='
     Eq,
 
+    /// punctuation '('
     LParen,
+    /// punctuation ')'
     RParen,
 
+    /// punctuation '['
     LBracket,
+    /// punctuation ']'
     RBracket,
 
+    /// punctuation '{'
     LBrace,
+    /// punctuation '}'
     RBrace,
 
+    /// punctuation '<'
     LAngle,
+    /// punctuation '>'
     RAngle,
 }
 
@@ -257,7 +275,7 @@ impl<'lex> Iterator for IRLexer<'lex> {
         let (res, span) = self.spanned.next()?;
         let res = res
             .map_err(|()| String::from("Internal lexer error"))
-            .and_then(|token| token.to_final());
+            .and_then(|token| token.into_final());
         Some((res, span))
     }
 }

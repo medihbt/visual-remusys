@@ -3,7 +3,7 @@ use smol_str::SmolStr;
 use std::fmt::Debug;
 
 use crate::{
-    ast::{AstNode, Ident, IdentKind, Label, Operand, TypeAst, TypeAstKind, TypeValue},
+    ast::{AstNode, Ident, IdentKind, Label, Operand, TypeAst, TypeAstKind, TypeValue, utils},
     parse_err,
     parser::{IRParseRes, IRParser},
     tokens::FinalToken,
@@ -70,12 +70,43 @@ pub enum InstKind {
 
     /// Syntax: `select <cond_ty> <cond>, <ty> <then_val>, <else_val>`
     Select(SelectAst),
+
+    /// Syntax: `[tail]? call <ret_ty> ['(' '...'] <func_val>(<args>) ')'
+    Call(CallAst),
 }
-#[derive(Debug)]
 pub struct InstAst {
     pub kind: InstKind,
     pub span: logos::Span,
     id: Option<Ident>,
+}
+
+impl Debug for InstAst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { kind, span, id } = self;
+        if let Some(id) = id {
+            write!(f, "InstAst({span:?} = %{id:?})::")?;
+        } else {
+            write!(f, "InstAst({span:?})::")?;
+        }
+        match kind {
+            InstKind::Unreachable => write!(f, "Unreachable"),
+            InstKind::RetVoid => write!(f, "RetVoid"),
+            InstKind::Ret(ret) => Debug::fmt(ret, f),
+            InstKind::Jump(label) => write!(f, "Jump to {label:?}"),
+            InstKind::Br(br) => Debug::fmt(br, f),
+            InstKind::Switch(switch) => Debug::fmt(switch, f),
+            InstKind::Phi(phi) => Debug::fmt(phi, f),
+            InstKind::Alloca(alloca) => Debug::fmt(alloca, f),
+            InstKind::GEP(gep) => Debug::fmt(gep, f),
+            InstKind::Load(load) => Debug::fmt(load, f),
+            InstKind::Store(store) => Debug::fmt(store, f),
+            InstKind::Bin(bin) => Debug::fmt(bin, f),
+            InstKind::Cast(cast) => Debug::fmt(cast, f),
+            InstKind::Cmp(cmp) => Debug::fmt(cmp, f),
+            InstKind::Select(select) => Debug::fmt(select, f),
+            InstKind::Call(call) => Debug::fmt(call, f),
+        }
+    }
 }
 
 impl AstNode for InstAst {
@@ -151,6 +182,8 @@ impl InstAst {
             "icmp" | "fcmp" => CmpAst::parse(parser).map(|s| inst(s, id)),
 
             "select" => SelectAst::parse(parser).map(|s| inst(s, id)),
+
+            "call" | "tail" => CallAst::parse(parser).map(|s| inst(s, id)),
 
             "extractvalue" => todo!("parse field extract"),
             "extractelement" => todo!("parse index extract"),
@@ -891,29 +924,76 @@ impl AstNode for SelectAst {
     }
 }
 
-mod utils {
-    use crate::parser::IRParseErrKind;
+/// Syntax:
+///
+/// ```remusys_ir
+/// [tail]? call <ret_ty> ['(' '...' ')']? <func_val>(<arg1_ty> <arg1>, <arg2_ty> <arg2>, ...)
+/// ```
+#[derive(Debug)]
+pub struct CallAst {
+    pub span: logos::Span,
+    /// syntax unit: `tail` indicating tail call
+    pub is_tail: bool,
+    /// syntax unit: `(...)` indicating vararg function
+    pub is_vararg: bool,
+    pub ret_ty: TypeAst,
+    /// not necessarily an identifier, could be function pointer
+    pub func: Operand,
+    pub args: Vec<TypeValue>,
+}
+impl From<CallAst> for InstAst {
+    fn from(value: CallAst) -> Self {
+        let span = value.span.clone();
+        Self {
+            kind: InstKind::Call(value),
+            span,
+            id: None,
+        }
+    }
+}
+impl AstNode for CallAst {
+    fn get_span(&self) -> logos::Span {
+        self.span.clone()
+    }
 
-    use super::*;
-
-    /// Parse optional align clause.
-    ///
-    /// Syntax: `, align <align>`
-    pub fn parse_align(parser: &mut IRParser<'_>) -> IRParseRes<Option<usize>> {
-        let span = match parser.peek0() {
-            Ok((FinalToken::Comma, span)) => span,
-            Ok((..)) => return Ok(None),
-            Err(e) if e.kind == IRParseErrKind::EndOfInput => return Ok(None),
-            Err(e) => return Err(e),
+    fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+        use crate::tokens::FinalToken as T;
+        let (is_tail, begin_pos) = if parser.peek0_match(T::lit_word("tail"))?.0 {
+            let begin_pos = parser.advance_exact(&[T::lit_word("tail")])?.start;
+            (true, begin_pos)
+        } else {
+            (false, parser.advance_exact(&[T::lit_word("call")])?.start)
         };
-        parser.advance_exact(&[FinalToken::Comma, FinalToken::lit_word("align")])?;
-        let res = match parser.peek0()? {
-            (FinalToken::LitInt(i), _) => Some(i as usize),
-            _ => {
-                let span = span.start..parser.parser_pos();
-                return parse_err!(Unmatch span, "align requires literal int");
+        let ret_ty = TypeAst::parse(parser)?;
+
+        let is_vararg = if parser.peek0_match(T::LParen)?.0 {
+            parser.advance_exact(&[T::LParen, T::Ellipsis, T::RParen])?;
+            true
+        } else {
+            false
+        };
+        let func = Operand::parse(parser)?;
+        let mut args: Vec<TypeValue> = Vec::new();
+
+        parser.advance_exact(&[T::LParen])?;
+        loop {
+            if parser.peek0_match(T::RParen)?.0 {
+                break;
             }
-        };
-        Ok(res)
+            if !args.is_empty() {
+                parser.advance_exact(&[T::Comma])?;
+            }
+            let arg = TypeValue::parse(parser)?;
+            args.push(arg);
+        }
+        let end_pos = parser.advance_exact(&[T::RParen])?.end;
+        Ok(Self {
+            span: begin_pos..end_pos,
+            is_tail,
+            is_vararg,
+            ret_ty,
+            func,
+            args,
+        })
     }
 }

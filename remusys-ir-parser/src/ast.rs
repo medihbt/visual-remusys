@@ -7,6 +7,12 @@ use crate::{
     tokens::FinalToken,
 };
 
+mod inst;
+mod typing;
+mod value;
+
+pub use self::{inst::*, typing::*, value::*};
+
 pub trait AstNode: Debug {
     fn get_span(&self) -> logos::Span;
 
@@ -78,577 +84,594 @@ impl AstNode for Ident {
     }
 }
 
-pub use typing::*;
-mod typing {
-    use std::ops::Range;
+pub use cfg::*;
+mod cfg {
+    use std::fmt::Debug;
 
-    use super::*;
-    use remusys_ir::typing::FPKind;
+    use smol_str::{SmolStr, format_smolstr};
 
-    #[derive(Debug, Clone)]
-    pub enum TypeAstKind {
-        /// Syntax: `'void'`
-        Void,
-        /// Syntax: `'ptr'`
-        Ptr,
-        /// Syntax: `'i1' | 'i8' | 'i16' | 'i32' | 'i64' | 'i128'`
-        Int(u8),
-        /// Syntax: `'float' | 'double'`
-        FP(FPKind),
-        /// Syntax: `'[' T_INT 'x' TypeAst ']'`
-        Array { elem: Box<TypeAst>, len: usize },
-        /// Syntax: `'<' T_INT 'x' TypeAst '>'`
-        Vec { elem: Box<TypeAst>, len: usize },
-        /// Syntax:
-        ///
-        /// ```remusys_ir
-        /// packed: '<' '{' (TypeAst ',')* '}' '>'
-        /// normal: '{' (TypeAst ',')* '}'
-        /// ```
-        Struct { elem: Box<[TypeAst]>, packed: bool },
-        /// Syntax: `%word`
-        Alias(Ident),
+    use crate::{
+        ast::{AstNode, Ident, IdentKind, InstAst},
+        parser::{IRParseErrKind, IRParseRes, IRParser},
+        tokens::FinalToken,
+    };
+
+    pub struct BlockAst {
+        pub label: Ident,
+        pub insts: Vec<InstAst>,
     }
-
-    #[derive(Clone)]
-    pub struct TypeAst {
-        pub span: logos::Span,
-        pub kind: TypeAstKind,
-    }
-
-    impl Debug for TypeAst {
+    impl Debug for BlockAst {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let Self { span, kind } = self;
-            match kind {
-                TypeAstKind::Void => write!(f, "TypeAst::Void ({span:?})"),
-                TypeAstKind::Ptr => write!(f, "TypeAst::Ptr ({span:?})"),
-                TypeAstKind::Int(bits) => write!(f, "TypeAst::i{bits} ({span:?})"),
-                TypeAstKind::FP(fpkind) => write!(f, "TypeAst::{fpkind:?} ({span:?})"),
-                TypeAstKind::Array { elem, len } => f
-                    .debug_struct("TypeAst::Array")
-                    .field("span", span)
-                    .field("elem", elem)
-                    .field("len", len)
-                    .finish(),
-                TypeAstKind::Vec { elem, len } => f
-                    .debug_struct("TypeAst::Vec")
-                    .field("span", span)
-                    .field("elem", elem)
-                    .field("len", len)
-                    .finish(),
-                TypeAstKind::Struct { elem, packed } => f
-                    .debug_struct("TypeAst::Struct")
-                    .field("span", span)
-                    .field("packed", packed)
-                    .field("elem", elem)
-                    .finish(),
-                TypeAstKind::Alias(ident) => {
-                    write!(f, "TypeAst::Alias ({span:?} name {:?})", &ident.name)
-                }
+            let Self { label, insts } = self;
+            write!(f, "BlockAst (label: {:?}) ", label)?;
+            f.debug_list().entries(insts.iter()).finish()
+        }
+    }
+    impl AstNode for BlockAst {
+        fn get_span(&self) -> logos::Span {
+            let mut span = self.label.get_span();
+            if let Some(end) = self.insts.last() {
+                span.end = end.get_span().end;
+            }
+            span
+        }
+
+        fn parse(_: &mut IRParser<'_>) -> IRParseRes<Self> {
+            panic!("Not supported: BlockAst::parse");
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum FuncLine {
+        Label(Ident),
+        Inst(Box<InstAst>),
+    }
+    impl AstNode for FuncLine {
+        fn get_span(&self) -> logos::Span {
+            match self {
+                Self::Label(l) => l.get_span(),
+                Self::Inst(i) => i.get_span(),
+            }
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            fn parse_inst(parser: &mut IRParser<'_>) -> IRParseRes<FuncLine> {
+                let inst = InstAst::parse(parser)?;
+                Ok(FuncLine::Inst(Box::new(inst)))
+            }
+            fn parse_label(
+                parser: &mut IRParser<'_>,
+                span0: logos::Span,
+                label_name: SmolStr,
+            ) -> IRParseRes<FuncLine> {
+                let span1 = match parser.peek1() {
+                    Ok((FinalToken::Colon, span)) => span,
+                    Ok(..) => return parse_inst(parser),
+                    Err(e) if e.kind == IRParseErrKind::EndOfInput => {
+                        return parse_inst(parser);
+                    }
+                    Err(e) => return Err(e),
+                };
+                parser.advance_n(2)?;
+                Ok(FuncLine::Label(Ident {
+                    kind: IdentKind::Local,
+                    name: label_name,
+                    span: span0.start..span1.end,
+                }))
+            }
+
+            let (tok0, span0) = parser.peek0()?;
+            match tok0 {
+                FinalToken::Word(label_name) => parse_label(parser, span0, label_name),
+                FinalToken::LitInt(id) => parse_label(parser, span0, format_smolstr!("{id}")),
+                _ => parse_inst(parser),
             }
         }
     }
 
-    impl AstNode for TypeAst {
+    pub struct FuncBodyAst {
+        pub span: logos::Span,
+        pub blocks: Vec<BlockAst>,
+    }
+    impl Debug for FuncBodyAst {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self { span, blocks } = self;
+            write!(f, "FuncBodyAst (span: {span:?}) ")?;
+            f.debug_list().entries(blocks.iter()).finish()
+        }
+    }
+    impl AstNode for FuncBodyAst {
         fn get_span(&self) -> logos::Span {
             self.span.clone()
         }
 
         fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let (tok, span) = parser.peek0()?;
-            match tok {
-                FinalToken::Word(word) => Self::parse_word(parser, word.as_str(), span),
-                FinalToken::PIdent(name) => {
-                    parser.advance_n(1)?;
-                    Ok(TypeAst {
-                        span: span.clone(),
-                        kind: TypeAstKind::Alias(Ident {
-                            kind: IdentKind::Local,
-                            name,
-                            span,
-                        }),
-                    })
-                }
-                FinalToken::LBracket => Self::parse_array(parser),
-                FinalToken::LBrace => Self::parse_struct(parser, false),
-                FinalToken::LAngle => Self::parse_angled(parser),
-                _ => parse_err!(Unmatch span, "unexpected token for typing AST"),
-            }
-        }
-    }
-
-    impl TypeAst {
-        fn parse_word(
-            parser: &mut IRParser<'_>,
-            word: &str,
-            span: logos::Span,
-        ) -> IRParseRes<Self> {
-            let kind = match word {
-                "void" => TypeAstKind::Void,
-                "ptr" => TypeAstKind::Ptr,
-                "float" => TypeAstKind::FP(FPKind::Ieee32),
-                "double" => TypeAstKind::FP(FPKind::Ieee64),
-                "i1" => TypeAstKind::Int(1),
-                "i8" => TypeAstKind::Int(8),
-                "i16" => TypeAstKind::Int(16),
-                "i32" => TypeAstKind::Int(32),
-                "i64" => TypeAstKind::Int(64),
-                "i128" => TypeAstKind::Int(128),
-                _ => return parse_err!(Unmatch span, "unexpected word for typing AST"),
+            let begin_pos = parser.advance_exact(&[FinalToken::LBrace])?.start;
+            let mut func_body = FuncBodyAst {
+                span: begin_pos..begin_pos,
+                blocks: Vec::new(),
             };
-            parser.advance_n(1)?;
-            Ok(TypeAst { span, kind })
-        }
-
-        fn parse_array(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let Range {
-                start: start_pos,
-                end: _,
-            } = parser.advance_exact(&[FinalToken::LBracket])?;
-
-            let length = {
-                let (tok, span) = parser.peek0()?;
-                let FinalToken::LitInt(length) = &tok else {
-                    return parse_err!(Unmatch start_pos..span.end, "unexpected length for array type but got {tok:?}");
-                };
-                parser.advance_n(1)?;
-                *length as usize
-            };
-            parser.advance_exact(&[FinalToken::lit_word("x")])?;
-
-            let elemty = TypeAst::parse(parser)?;
-            let Range {
-                start: _,
-                end: end_pos,
-            } = parser.advance_exact(&[FinalToken::RBracket])?;
-
-            Ok(Self {
-                span: start_pos..end_pos,
-                kind: TypeAstKind::Array {
-                    elem: Box::new(elemty),
-                    len: length,
-                },
-            })
-        }
-
-        fn parse_struct(parser: &mut IRParser<'_>, packed: bool) -> IRParseRes<Self> {
-            let start_pos = if packed {
-                parser
-                    .advance_exact(&[FinalToken::LAngle, FinalToken::LBrace])?
-                    .start
-            } else {
-                parser.advance_exact(&[FinalToken::LBrace])?.start
-            };
-            let mut elems = Vec::new();
             loop {
-                let (matches, _) = parser.peek0_match(FinalToken::RBrace)?;
-                if matches {
+                if parser.peek0_match(FinalToken::RBrace)?.0 {
                     break;
                 }
-                let elemty = TypeAst::parse(parser)?;
-                if parser.peek0_match(FinalToken::Comma)?.0 {
-                    parser.advance_n(1)?;
-                }
-                elems.push(elemty);
+                func_body.add_line(FuncLine::parse(parser)?);
             }
-            let end_pos = if packed {
-                parser
-                    .advance_exact(&[FinalToken::RBrace, FinalToken::RAngle])?
-                    .end
-            } else {
-                parser.advance_exact(&[FinalToken::RBrace])?.end
-            };
-            Ok(Self {
-                span: start_pos..end_pos,
-                kind: TypeAstKind::Struct {
-                    elem: elems.into_boxed_slice(),
-                    packed,
-                },
-            })
+            let end_pos = parser.advance_exact(&[FinalToken::RBrace])?.end;
+            func_body.span.end = end_pos;
+            Ok(func_body)
         }
-
-        fn parse_angled(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let (FinalToken::LAngle, begin_span) = parser.peek0()? else {
-                panic!("should have been verified: starts with '<'");
-            };
-            let (next, next_span) = parser.peek1()?;
-            match next {
-                FinalToken::LitInt(_) => Self::parse_fixvec(parser),
-                FinalToken::LBrace => Self::parse_struct(parser, true),
-                next => {
-                    return parse_err!(
-                        Unmatch begin_span.start..next_span.end,
-                        "expected angled type '< N x T >' or '<{{ T, T, ... }}>' but got token {next:?}"
-                    );
+    }
+    impl FuncBodyAst {
+        fn add_line(&mut self, line: FuncLine) {
+            match line {
+                FuncLine::Label(label) => self.blocks.push(BlockAst {
+                    label,
+                    insts: Vec::new(),
+                }),
+                FuncLine::Inst(inst) if self.blocks.is_empty() => {
+                    let span = inst.get_span();
+                    self.blocks.push(BlockAst {
+                        label: Ident {
+                            kind: IdentKind::Word,
+                            name: SmolStr::new(""),
+                            span: span.start..span.start,
+                        },
+                        insts: vec![*inst],
+                    });
+                }
+                FuncLine::Inst(inst) => {
+                    let last_block = self.blocks.last_mut().unwrap();
+                    last_block.insts.push(*inst);
                 }
             }
-        }
-
-        fn parse_fixvec(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let begin_pos = parser.advance_exact(&[FinalToken::LAngle])?.start;
-            let (length_tok, span) = parser.peek0()?;
-            let FinalToken::LitInt(length) = length_tok else {
-                return parse_err!(Unmatch begin_pos..span.end, "expected vec type '< N x T >'");
-            };
-            parser.advance_n(1)?;
-            parser.advance_exact(&[FinalToken::lit_word("x")])?;
-            let elemty = TypeAst::parse(parser)?;
-            let end_pos = parser.advance_exact(&[FinalToken::RAngle])?.end;
-
-            match &elemty.kind {
-                TypeAstKind::Int(_) | TypeAstKind::FP(_) | TypeAstKind::Ptr => {}
-                _ => return parse_err!(TypeErrInvalidVecElem begin_pos..end_pos),
-            }
-
-            Ok(Self {
-                span: begin_pos..end_pos,
-                kind: TypeAstKind::Vec {
-                    elem: Box::new(elemty),
-                    len: length as usize,
-                },
-            })
         }
     }
 }
 
-pub use value::*;
-mod value {
-    use std::sync::Arc;
+pub use module::*;
+mod module {
+    use std::{fmt::Debug, sync::Arc};
 
-    use crate::{
-        ast::{AstNode, TypeAst},
-        parse_err,
-        parser::{IRParseRes, IRParser},
-        tokens::FinalToken,
-    };
+    use remusys_ir::ir::Linkage;
     use smol_str::SmolStr;
 
-    #[derive(Debug, Clone)]
-    pub enum OperandKind {
-        Undef,
-        Poison,
-        Zeroinit,
-        Null,
-        Bool(bool),
-        Int(i128),
-        FP(f64),
-        Global(SmolStr),
-        Local(SmolStr),
-        Bytes(Arc<[u8]>),
-        Aggr(Aggr),
-        Sparse(SparseExpr),
-    }
-    #[derive(Debug, Clone)]
-    pub struct Operand {
-        pub span: logos::Span,
-        pub kind: OperandKind,
-    }
+    use crate::{
+        ast::{AstNode, FuncBodyAst, Ident, IdentKind, Operand, TypeAst, utils},
+        parse_err,
+        parser::{IRParseErrKind, IRParseRes, IRParser},
+        tokens::FinalToken,
+    };
 
-    impl AstNode for Operand {
-        fn get_span(&self) -> logos::Span {
-            self.span.clone()
-        }
-
-        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let (tok0, span0) = parser.peek0()?;
-            match tok0 {
-                FinalToken::Word(word) => {
-                    let kind = match word.as_str() {
-                        "undef" => OperandKind::Undef,
-                        "poison" => OperandKind::Poison,
-                        "null" => OperandKind::Null,
-                        "zeroinitialzier" => OperandKind::Zeroinit,
-                        "false" => OperandKind::Bool(false),
-                        "true" => OperandKind::Bool(true),
-                        "sparse" => return SparseExpr::parse(parser).map(|s| s.into()),
-                        word => {
-                            return parse_err!(Unmatch span0, "value as word is unexpected {word:?}");
-                        }
-                    };
-                    parser.advance_n(1)?;
-                    Ok(Self { span: span0, kind })
-                }
-                FinalToken::LitInt(li) => {
-                    parser.advance_n(1)?;
-                    Ok(Self {
-                        span: span0,
-                        kind: OperandKind::Int(li),
-                    })
-                }
-                FinalToken::LitFP(fp) => {
-                    parser.advance_n(1)?;
-                    Ok(Self {
-                        span: span0,
-                        kind: OperandKind::FP(fp),
-                    })
-                }
-                FinalToken::AIdent(id) => {
-                    parser.advance_n(1)?;
-                    Ok(Self {
-                        span: span0,
-                        kind: OperandKind::Global(id),
-                    })
-                }
-                FinalToken::PIdent(id) => {
-                    parser.advance_n(1)?;
-                    Ok(Self {
-                        span: span0,
-                        kind: OperandKind::Local(id),
-                    })
-                }
-                FinalToken::LitBytes(mut bytes) => {
-                    parser.advance_n(1)?;
-                    Ok(Self {
-                        span: span0,
-                        kind: OperandKind::Bytes(Arc::from(bytes.as_mut_slice())),
-                    })
-                }
-                FinalToken::LBracket | FinalToken::LBrace | FinalToken::LAngle => {
-                    Aggr::parse(parser).map(|a| a.into())
-                }
-                _ => parse_err!(Unmatch span0, "invalid syntax for Operand"),
-            }
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct TypeValue {
+    #[derive(Debug)]
+    pub struct FuncArg {
         pub ty: TypeAst,
-        pub val: Operand,
+        pub name: Ident,
     }
-
-    impl AstNode for TypeValue {
+    impl AstNode for FuncArg {
         fn get_span(&self) -> logos::Span {
-            self.ty.span.start..self.val.span.end
+            self.ty.get_span().start..self.name.get_span().end
         }
 
         fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
             let ty = TypeAst::parse(parser)?;
-            let val = Operand::parse(parser)?;
-            Ok(Self { ty, val })
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum AggrKind {
-        Array,
-        Vec,
-        Struct,
-        PackStruct,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct Aggr {
-        pub span: logos::Span,
-        pub kind: AggrKind,
-        pub elems: Vec<TypeValue>,
-    }
-    impl From<Aggr> for Operand {
-        fn from(value: Aggr) -> Self {
-            let span = value.span.clone();
-            Operand {
-                span,
-                kind: OperandKind::Aggr(value),
-            }
-        }
-    }
-    impl AstNode for Aggr {
-        fn get_span(&self) -> logos::Span {
-            self.span.clone()
-        }
-
-        /// ```remusys_ir
-        /// array: '[' (TypeValue ',')* ']'
-        /// struct: '{' (TypeValue ',')* '}'
-        /// packed struct: '<{' (TypeValue ',')* '}>'
-        /// vec: '<' (TypeValue ',')* '>'
-        /// ```
-        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let (tok0, span0) = parser.peek0()?;
-            match tok0 {
-                FinalToken::LBrace => {
-                    parser.advance_n(1)?;
-                    Self::parse_values(parser, AggrKind::Struct, &[FinalToken::RBrace])
-                        .map_err(|e| e.map_span(|span| span0.start..span.end))
-                }
-                FinalToken::LBracket => {
-                    parser.advance_n(1)?;
-                    Self::parse_values(parser, AggrKind::Array, &[FinalToken::RBracket])
-                        .map_err(|e| e.map_span(|span| span0.start..span.end))
-                }
-                FinalToken::LAngle => Self::parse_angled(parser),
-                tok => {
-                    parse_err!(Unmatch span0, "aggregates require '<...>' '<{{ ... }}>' '{{ ... }}' '[ ... ]' quote but got token {tok:?}")
-                }
-            }
-        }
-    }
-    impl Aggr {
-        fn parse_angled(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let start_pos = parser.advance_exact(&[FinalToken::LAngle])?.start;
-            let (tok1, _) = parser.peek0()?;
-            if tok1 == FinalToken::LBrace {
-                // starts with '<{': branch 'packed struct'
-                parser.advance_n(1)?;
-                Self::parse_values(
-                    parser,
-                    AggrKind::PackStruct,
-                    &[FinalToken::RBrace, FinalToken::RAngle],
-                )
-                .map_err(|e| e.map_span(|span| start_pos..span.end))
-            } else {
-                // starts with '<': branch 'fix vector'
-                Self::parse_values(parser, AggrKind::Vec, &[FinalToken::RAngle])
-                    .map_err(|e| e.map_span(|span| start_pos..span.end))
-            }
-        }
-
-        fn parse_values(
-            parser: &mut IRParser<'_>,
-            kind: AggrKind,
-            ending: &[FinalToken],
-        ) -> IRParseRes<Self> {
-            let mut elems: Vec<TypeValue> = Vec::new();
-            let begin_pos = parser.parser_pos();
-            loop {
-                let (tok, _) = parser.peek0()?;
-                if tok.eq(&ending[0]) {
-                    break;
-                }
-                let tv = TypeValue::parse(parser)?;
-                elems.push(tv);
-                if let (FinalToken::Comma, _) = parser.peek0()? {
-                    parser.advance_n(1)?;
-                } else {
-                    break;
-                }
-            }
-            let end_pos = parser.advance_exact(ending)?.end;
-            Ok(Self {
-                span: begin_pos..end_pos,
-                kind,
-                elems,
-            })
-        }
-    }
-
-    /// Sparse key-value array expression.
-    #[derive(Debug, Clone)]
-    pub struct SparseExpr {
-        pub span: logos::Span,
-        pub elems: Vec<(usize, TypeValue)>,
-        pub default: Box<TypeValue>,
-    }
-    impl From<SparseExpr> for Operand {
-        fn from(value: SparseExpr) -> Self {
-            let span = value.get_span();
-            Operand {
-                span,
-                kind: OperandKind::Sparse(value),
-            }
-        }
-    }
-    impl AstNode for SparseExpr {
-        fn get_span(&self) -> logos::Span {
-            self.span.clone()
-        }
-
-        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let begin_pos = parser
-                .advance_exact(&[FinalToken::lit_word("sparse"), FinalToken::LBracket])?
-                .start;
-            let mut elems = Vec::new();
-            // body: `[Index] = Type Value,`
-            loop {
-                if let (FinalToken::DotDotEq, _) = parser.peek0()? {
-                    break;
-                }
-                parser
-                    .advance_exact(&[FinalToken::LBracket])
-                    .map_err(|e| e.map_span(|s| begin_pos..s.end))?;
-                let index = match parser.peek0()? {
-                    (FinalToken::LitInt(index), _) => index as usize,
-                    (_, span) => {
-                        return parse_err!(Unmatch begin_pos..span.end, "sparse array expr element is `[ index ] = ty value,`");
-                    }
-                };
-                parser
-                    .advance_exact(&[FinalToken::RBracket, FinalToken::Eq])
-                    .map_err(|e| e.map_span(|s| begin_pos..s.end))?;
-                let tv = TypeValue::parse(parser)?;
-                elems.push((index, tv));
-                parser
-                    .advance_exact(&[FinalToken::Comma])
-                    .map_err(|e| e.map_span(|s| begin_pos..s.end))?;
-            }
-            parser.advance_exact(&[FinalToken::DotDotEq])?;
-            let default_tv =
-                TypeValue::parse(parser).map_err(|e| e.map_span(|span| begin_pos..span.end))?;
-            if let (FinalToken::Comma, _) = parser.peek0()? {
-                parser.advance_n(1)?
-            }
-            let end_pos = parser.advance_exact(&[FinalToken::RBracket])?.end;
-            Ok(Self {
-                span: begin_pos..end_pos,
-                elems,
-                default: Box::new(default_tv),
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct Label {
-        pub span: logos::Span,
-        pub name: SmolStr,
-    }
-
-    impl AstNode for Label {
-        fn get_span(&self) -> logos::Span {
-            self.span.clone()
-        }
-
-        fn repr(&self) -> String {
-            let Self { span, name } = self;
-            format!("label {name:?} ({span:?})")
-        }
-
-        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
-            let begin_pos = parser
-                .advance_exact(&[FinalToken::lit_word("label")])?
-                .start;
             match parser.peek0()? {
-                (FinalToken::PIdent(id), span) => {
+                (FinalToken::Comma, _) | (FinalToken::RParen, _) => Ok(Self::new_unnamed(ty)),
+                (FinalToken::PIdent(name), span) => {
+                    let kind = IdentKind::Local;
+                    let name = Ident { span, name, kind };
                     parser.advance_n(1)?;
-                    Ok(Self {
-                        span: begin_pos..span.end,
-                        name: id,
-                    })
+                    Ok(Self { ty, name })
+                }
+                (FinalToken::Word(attr), span) => {
+                    parse_err!(Unmatch ty.span.start..span.end, "this parser has not supported attrs yet (maybe attr {attr:?})")
                 }
                 (tok, span) => {
-                    parse_err!(Unmatch begin_pos..span.end, "label requires 'label %id' but got tokens [Label, {tok:?}]")
+                    parse_err!(Unmatch ty.span.start..span.end, "invalid FuncArg token {tok:?}")
                 }
             }
+        }
+    }
+    impl FuncArg {
+        fn new_unnamed(ty: TypeAst) -> Self {
+            let name = Ident {
+                span: ty.span.end..ty.span.end,
+                kind: IdentKind::Local,
+                name: SmolStr::new_inline(""),
+            };
+            Self { ty, name }
+        }
+    }
+
+    /// function header
+    ///
+    /// Syntax:
+    ///
+    /// ```remusys_ir
+    /// declare [Linkage]? <ret_ty> @name ParamList
+    /// define [Linkage]? <ret_ty> @name ParamList
+    ///
+    /// ParamList: '(' (ParamUnit,)* ')'
+    /// Linkage: 'private' | 'internal' | 'external' | 'dso_local'
+    /// ```
+    #[derive(Debug)]
+    pub struct FuncHeader {
+        pub span: logos::Span,
+        pub is_declare: bool,
+        pub linkage: Linkage,
+        pub name: SmolStr,
+        pub ret_ty: TypeAst,
+        pub args: Vec<FuncArg>,
+    }
+    impl AstNode for FuncHeader {
+        fn get_span(&self) -> logos::Span {
+            self.span.clone()
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let (is_declare, begin_pos) = Self::parse_head(parser)?;
+            let linkage = {
+                let linkage = if is_declare {
+                    Linkage::External
+                } else {
+                    Linkage::Private
+                };
+                utils::parse_linkage(parser)?.unwrap_or(linkage)
+            };
+            let ret_ty = TypeAst::parse(parser)?;
+            let (tok, span) = parser.peek0()?;
+            let name = match tok {
+                FinalToken::AIdent(id) => {
+                    parser.advance_n(1)?;
+                    id
+                }
+                tok => {
+                    return parse_err!(Unmatch span, "function name requires '@word' but got token {tok:?}");
+                }
+            };
+
+            let mut args = Vec::new();
+            parser.advance_exact(&[FinalToken::LParen])?;
+            loop {
+                if parser.peek0_match(FinalToken::RParen)?.0 {
+                    break;
+                }
+                let arg = FuncArg::parse(parser)?;
+                args.push(arg);
+                if parser.peek0_match(FinalToken::Comma)?.0 {
+                    parser.advance_n(1)?;
+                }
+            }
+            let end_pos = parser.advance_exact(&[FinalToken::RParen])?.end;
+            Ok(Self {
+                span: begin_pos..end_pos,
+                is_declare,
+                linkage,
+                name,
+                ret_ty,
+                args,
+            })
+        }
+    }
+    impl FuncHeader {
+        fn parse_head(parser: &mut IRParser<'_>) -> IRParseRes<(bool, usize)> {
+            let (word, span) = match parser.peek0()? {
+                (FinalToken::Word(word), span) => (word, span),
+                (tok, span) => {
+                    return parse_err!(
+                        Unmatch span,
+                        "function header requires 'declare' | 'define' but got token {tok:?}"
+                    );
+                }
+            };
+            let is_declare = match word.as_str() {
+                "declare" => true,
+                "define" => false,
+                word => {
+                    return parse_err!(
+                        Unmatch span,
+                        "function header requires 'declare' | 'define' but got word {word:?}"
+                    );
+                }
+            };
+            parser.advance_n(1)?;
+            Ok((is_declare, span.start))
+        }
+    }
+
+    /// Syntax:
+    ///
+    /// ```remusys_ir
+    /// FuncAst: FuncHeader FuncBodyAst?
+    /// ```
+    pub struct FuncAst {
+        pub header: FuncHeader,
+        pub body: Option<FuncBodyAst>,
+    }
+    impl Debug for FuncAst {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self { header, body } = self;
+            let mut ds = f.debug_struct("FuncAst");
+            ds.field("header", header);
+            if let Some(body) = body {
+                ds.field("body", body);
+            }
+            ds.finish()
+        }
+    }
+    impl AstNode for FuncAst {
+        fn get_span(&self) -> logos::Span {
+            let header_span = self.header.get_span();
+            match &self.body {
+                None => header_span,
+                Some(body) => header_span.start..body.get_span().end,
+            }
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let header = FuncHeader::parse(parser)?;
+            let body = if header.is_declare {
+                None
+            } else {
+                Some(FuncBodyAst::parse(parser)?)
+            };
+            Ok(Self { header, body })
+        }
+    }
+
+    /// Syntax:
+    ///
+    /// ```remusys_ir
+    /// @name = external (global|constant) <type>[, align <align>]?
+    /// @name = [Linkage]? (global|constant) <type> <value>[, align <align>]?
+    /// ```
+    #[derive(Debug)]
+    pub struct GlobalVarAst {
+        pub span: logos::Span,
+        pub name: SmolStr,
+        pub linkage: Linkage,
+        /// from syntax: `global => false; constant => true`
+        pub is_const: bool,
+        pub ty: TypeAst,
+        pub init: Option<Operand>,
+        pub align: Option<usize>,
+    }
+    impl AstNode for GlobalVarAst {
+        fn get_span(&self) -> logos::Span {
+            self.span.clone()
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            use crate::ast::FinalToken as T;
+            let (name, begin_pos) = match parser.peek0()? {
+                (T::AIdent(id), span) => {
+                    parser.advance_n(1)?;
+                    (id, span.start)
+                }
+                (tok, span) => {
+                    return parse_err!(Unmatch span, "global variable requires '@word' but got token {tok:?}");
+                }
+            };
+            parser.advance_exact(&[T::Eq])?;
+            let linkage = utils::parse_linkage(parser)?.unwrap_or(Linkage::Private);
+
+            let is_const = match parser.peek0()? {
+                (T::Word(word), span) => match word.as_str() {
+                    "global" => false,
+                    "constant" => true,
+                    word => {
+                        return parse_err!(Unmatch span, "global variable requires 'global' | 'constant' but got word {word:?}");
+                    }
+                },
+                (tok, span) => {
+                    return parse_err!(Unmatch span, "global variable requires 'global' | 'constant' but got token {tok:?}");
+                }
+            };
+            parser.advance_n(1)?;
+
+            let ty = TypeAst::parse(parser)?;
+            let init = if linkage == Linkage::External {
+                None
+            } else {
+                Some(Operand::parse(parser)?)
+            };
+            let align = utils::parse_align(parser)?;
+            let end_pos = parser.parser_pos();
+            Ok(Self {
+                span: begin_pos..end_pos,
+                name,
+                linkage,
+                is_const,
+                ty,
+                init,
+                align,
+            })
+        }
+    }
+
+    /// Syntax:
+    ///
+    /// ```remusys-ir
+    /// %name = type <struct_type>
+    ///
+    /// <struct_type> is limited to struct type or packed struct type.
+    /// this will be verified in semantic analysis phase.
+    /// ```
+    #[derive(Debug)]
+    pub struct TypeAliasItem {
+        pub span: logos::Span,
+        pub name: SmolStr,
+        /// will be checked in semantic analysis phase
+        pub ty: TypeAst,
+    }
+    impl AstNode for TypeAliasItem {
+        fn get_span(&self) -> logos::Span {
+            self.span.clone()
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let (name, begin_pos) = match parser.peek0()? {
+                (FinalToken::PIdent(id), span) => {
+                    parser.advance_n(1)?;
+                    (id, span.start)
+                }
+                (tok, span) => {
+                    return parse_err!(Unmatch span, "type alias requires '%word' but got token {tok:?}");
+                }
+            };
+            parser.advance_exact(&[FinalToken::Eq, FinalToken::lit_word("type")])?;
+            let ty = TypeAst::parse(parser)?;
+            let end_pos = parser.parser_pos();
+            Ok(Self {
+                span: begin_pos..end_pos,
+                name,
+                ty,
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum ModuleItem {
+        Func(FuncAst),
+        GlobalVar(GlobalVarAst),
+        TypeAlias(TypeAliasItem),
+        Finish(usize),
+    }
+    impl AstNode for ModuleItem {
+        fn get_span(&self) -> logos::Span {
+            match self {
+                Self::Func(f) => f.get_span(),
+                Self::GlobalVar(g) => g.get_span(),
+                Self::TypeAlias(t) => t.get_span(),
+                Self::Finish(pos) => *pos..*pos,
+            }
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let (tok0, span0) = match parser.peek0() {
+                Ok(v) => v,
+                Err(e) if e.kind == IRParseErrKind::EndOfInput => {
+                    let pos = parser.parser_pos();
+                    return Ok(Self::Finish(pos));
+                }
+                Err(e) => return Err(e),
+            };
+
+            match tok0 {
+                FinalToken::Word(word) => match word.as_str() {
+                    "declare" | "define" => {
+                        let func = FuncAst::parse(parser)?;
+                        Ok(Self::Func(func))
+                    }
+                    word => {
+                        parse_err!(Unmatch span0, "unexpected word at module level: {word:?}")
+                    }
+                },
+                FinalToken::AIdent(_) => {
+                    let glob = GlobalVarAst::parse(parser)?;
+                    Ok(Self::GlobalVar(glob))
+                }
+                FinalToken::PIdent(_) => {
+                    let type_alias = TypeAliasItem::parse(parser)?;
+                    Ok(Self::TypeAlias(type_alias))
+                }
+                _ => {
+                    parse_err!(Unmatch span0, "unexpected token at module level: {tok0:?}")
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct ModuleAst {
+        pub funcs: Vec<FuncAst>,
+        pub global_vars: Vec<GlobalVarAst>,
+        pub type_aliases: Vec<Arc<TypeAliasItem>>,
+        pub span: logos::Span,
+    }
+    impl AstNode for ModuleAst {
+        fn get_span(&self) -> logos::Span {
+            self.span.clone()
+        }
+
+        fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
+            let begin_pos = parser.parser_pos();
+            let mut module = ModuleAst {
+                funcs: Vec::new(),
+                global_vars: Vec::new(),
+                type_aliases: Vec::new(),
+                span: begin_pos..begin_pos,
+            };
+            let end_pos = loop {
+                let item = ModuleItem::parse(parser)?;
+                match item {
+                    ModuleItem::Func(f) => module.funcs.push(f),
+                    ModuleItem::GlobalVar(g) => module.global_vars.push(g),
+                    ModuleItem::TypeAlias(t) => module.type_aliases.push(Arc::new(t)),
+                    ModuleItem::Finish(pos) => break pos,
+                }
+            };
+            module.span.end = end_pos;
+            Ok(module)
         }
     }
 }
 
-pub use inst::*;
-mod inst;
+mod utils {
+    use super::*;
+    use remusys_ir::ir::Linkage;
 
+    pub fn parse_linkage(parser: &mut IRParser<'_>) -> IRParseRes<Option<Linkage>> {
+        let (FinalToken::Word(word), _) = parser.peek0()? else {
+            return Ok(None);
+        };
+        let linkage = match word.as_str() {
+            "private" => Linkage::Private,
+            "internal" => Linkage::Private,
+            "external" => Linkage::External,
+            "dso_local" => Linkage::DSOLocal,
+            _ => return Ok(None),
+        };
+        parser.advance_n(1)?;
+        Ok(Some(linkage))
+    }
+    /// Parse optional align clause.
+    ///
+    /// Syntax: `, align <align>`
+    pub fn parse_align(parser: &mut IRParser<'_>) -> IRParseRes<Option<usize>> {
+        let span = match parser.peek0() {
+            Ok((FinalToken::Comma, span)) => span,
+            Ok((..)) => return Ok(None),
+            Err(e) if e.kind == IRParseErrKind::EndOfInput => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        parser.advance_exact(&[FinalToken::Comma, FinalToken::lit_word("align")])?;
+        let res = match parser.peek0()? {
+            (FinalToken::LitInt(i), _) => Some(i as usize),
+            _ => {
+                let span = span.start..parser.parser_pos();
+                return parse_err!(Unmatch span, "align requires literal int");
+            }
+        };
+        parser.advance_n(1)?;
+        Ok(res)
+    }
+}
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+    struct ParserErr<'a>(&'a IRParser<'a>, IRParseErr);
+
+    impl<'a> Debug for ParserErr<'a> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let Self(parser, err) = self;
+            parser.print_fmt_err(err, f)
+        }
+    }
 
     fn ast_test_common<T: AstNode>(inputs: &[&str]) {
-        struct ParserErr<'a>(&'a IRParser<'a>, IRParseErr);
-
-        impl<'a> Debug for ParserErr<'a> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let Self(parser, err) = self;
-                parser.print_fmt_err(err, f)
-            }
-        }
-
         for &input in inputs {
             let mut parser = IRParser::new(input);
             match T::parse(&mut parser) {
@@ -687,6 +710,7 @@ mod tests {
             "[ i32 1, i32 2, i32 3 ]",
             "{ i32 10, [4 x i8] zeroinitialzier, i64 20 }",
             r#"c"Hello, world""#,
+            "sparse [ [0] = i32 10, [2] = i32 20, ..= i32 0 ]",
         ]);
     }
 
@@ -700,7 +724,25 @@ mod tests {
                 i32 0, label %case0
                 i32 1, label %case1
                 i32 2, label %case2
-            ]"#
+            ]"#,
+            r"%res = call i32 (...) @printf(ptr %fmt, i32 1, i32 2)",
         ]);
+    }
+
+    #[test]
+    fn test_parsing() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("main.ll");
+        let input = std::fs::read_to_string(dir).unwrap();
+        let mut parser = IRParser::new(&input);
+        match ModuleAst::parse(&mut parser) {
+            Ok(module) => {
+                println!("Parsed module:\n{:#?}", module);
+            }
+            Err(err) => {
+                panic!("{:?}", ParserErr(&parser, err));
+            }
+        }
     }
 }

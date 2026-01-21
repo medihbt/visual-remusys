@@ -202,6 +202,8 @@ impl<'src> IRParser<'src> {
         Ok(())
     }
 
+    /// Advance the parser if the next tokens exactly match the given kinds.
+    /// Returns an error if any token does not match.
     pub fn advance_exact(&mut self, kinds: &[FinalToken]) -> IRParseRes<logos::Span> {
         let begin_pos = self.parser_pos();
         for kind in kinds {
