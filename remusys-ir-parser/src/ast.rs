@@ -233,7 +233,7 @@ pub use module::*;
 mod module {
     use std::{fmt::Debug, sync::Arc};
 
-    use remusys_ir::ir::Linkage;
+    use remusys_ir::ir::{Linkage, TLSModel};
     use smol_str::SmolStr;
 
     use crate::{
@@ -430,6 +430,7 @@ mod module {
         pub span: logos::Span,
         pub name: SmolStr,
         pub linkage: Linkage,
+        pub tls_model: Option<TLSModel>,
         /// from syntax: `global => false; constant => true`
         pub is_const: bool,
         pub ty: TypeAst,
@@ -454,6 +455,8 @@ mod module {
             };
             parser.advance_exact(&[T::Eq])?;
             let linkage = utils::parse_linkage(parser)?.unwrap_or(Linkage::Private);
+
+            let tls_model = utils::parse_tls_model(parser)?;
 
             let is_const = match parser.peek0()? {
                 (T::Word(word), span) => match word.as_str() {
@@ -481,6 +484,7 @@ mod module {
                 span: begin_pos..end_pos,
                 name,
                 linkage,
+                tls_model,
                 is_const,
                 ty,
                 init,
@@ -619,10 +623,11 @@ mod module {
 
 mod utils {
     use super::*;
-    use remusys_ir::ir::Linkage;
+    use FinalToken as T;
+    use remusys_ir::ir::{Linkage, TLSModel};
 
     pub fn parse_linkage(parser: &mut IRParser<'_>) -> IRParseRes<Option<Linkage>> {
-        let (FinalToken::Word(word), _) = parser.peek0()? else {
+        let (T::Word(word), _) = parser.peek0()? else {
             return Ok(None);
         };
         let linkage = match word.as_str() {
@@ -635,19 +640,52 @@ mod utils {
         parser.advance_n(1)?;
         Ok(Some(linkage))
     }
+    /// Parse optional tls_model clause.
+    pub fn parse_tls_model(parser: &mut IRParser<'_>) -> IRParseRes<Option<TLSModel>> {
+        let (T::Word(word), begin_span) = parser.peek0()? else {
+            return Ok(None);
+        };
+        if word != "thread_local" {
+            return Ok(None);
+        }
+        parser.advance_n(1)?;
+        parser.advance_exact(&[T::LParen])?;
+
+        let (model_name, model_span) = match parser.peek0()? {
+            (T::Word(model_word), span) => (model_word, span),
+            (tok, span) => {
+                return parse_err!(Unmatch span, "tls_model requires model word but got token {tok:?}");
+            }
+        };
+        let model = match TLSModel::from_ir_text(&model_name) {
+            Some(model) => model,
+            None => {
+                let span = begin_span.start..model_span.end;
+                return parse_err!(
+                    Unmatch span,
+                    "unknown tls_model name: '{model_name}', supported models are: \
+                    'generaldynamic', 'localdynamic', 'initialexec', 'localexec'"
+                );
+            }
+        };
+        parser.advance_n(1)?;
+        parser.advance_exact(&[T::RParen])?;
+        Ok(Some(model))
+    }
+
     /// Parse optional align clause.
     ///
     /// Syntax: `, align <align>`
     pub fn parse_align(parser: &mut IRParser<'_>) -> IRParseRes<Option<usize>> {
         let span = match parser.peek0() {
-            Ok((FinalToken::Comma, span)) => span,
+            Ok((T::Comma, span)) => span,
             Ok((..)) => return Ok(None),
             Err(e) if e.kind == IRParseErrKind::EndOfInput => return Ok(None),
             Err(e) => return Err(e),
         };
-        parser.advance_exact(&[FinalToken::Comma, FinalToken::lit_word("align")])?;
+        parser.advance_exact(&[T::Comma, T::lit_word("align")])?;
         let res = match parser.peek0()? {
-            (FinalToken::LitInt(i), _) => Some(i as usize),
+            (T::LitInt(i), _) => Some(i as usize),
             _ => {
                 let span = span.start..parser.parser_pos();
                 return parse_err!(Unmatch span, "align requires literal int");

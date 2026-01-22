@@ -528,6 +528,7 @@ dependencies = [
  "mtb-entity-slab",
  "slab",
  "smallvec",
+ "smol_str",
  "thiserror",
 ]
 
@@ -560,6 +561,7 @@ name = "remusys-wasm"
 version = "0.1.0"
 dependencies = [
  "remusys-ir",
+ "remusys-ir-parser",
  "remusys-lang",
  "serde",
  "serde-wasm-bindgen",
