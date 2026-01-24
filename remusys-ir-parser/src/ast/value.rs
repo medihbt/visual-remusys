@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use crate::{
-    ast::{AstNode, TypeAst},
+    ast::{AstNode, Ident, IdentKind, TypeAst},
     parse_err,
     parser::{IRParseRes, IRParser},
     tokens::FinalToken,
@@ -132,7 +132,7 @@ impl AstNode for TypeValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AggrKind {
     Array,
     Vec,
@@ -331,6 +331,15 @@ impl AstNode for Label {
             (tok, span) => {
                 parse_err!(Unmatch begin_pos..span.end, "label requires 'label %id' but got tokens [Label, {tok:?}]")
             }
+        }
+    }
+}
+impl Label {
+    pub fn make_ident(&self) -> Ident {
+        Ident {
+            kind: IdentKind::Local,
+            name: self.name.clone(),
+            span: self.get_span(),
         }
     }
 }

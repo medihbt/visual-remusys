@@ -27,6 +27,20 @@ pub enum TypeAstKind {
     /// Syntax: `%word`
     Alias(Ident),
 }
+impl TypeAstKind {
+    pub fn get_name(&self) -> &'static str {
+        match self {
+            TypeAstKind::Void => "void",
+            TypeAstKind::Ptr => "ptr",
+            TypeAstKind::Int(_) => "int",
+            TypeAstKind::FP(_) => "float-point",
+            TypeAstKind::Array { .. } => "array",
+            TypeAstKind::Vec { .. } => "vector",
+            TypeAstKind::Struct { .. } => "struct",
+            TypeAstKind::Alias(_) => "type-alias",
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TypeAst {

@@ -120,6 +120,14 @@ mod cfg {
             panic!("Not supported: BlockAst::parse");
         }
     }
+    impl BlockAst {
+        pub fn get_name(&self) -> &str {
+            self.label.name.as_str()
+        }
+        pub fn name_clone(&self) -> SmolStr {
+            self.label.name.clone()
+        }
+    }
 
     #[derive(Debug)]
     pub enum FuncLine {
@@ -616,6 +624,7 @@ mod module {
                 }
             };
             module.span.end = end_pos;
+            crate::sema::fill_module_ids(&mut module);
             Ok(module)
         }
     }
