@@ -58,14 +58,12 @@ pub struct Ident {
     pub name: SmolStr,
     pub span: logos::Span,
 }
-
 impl Debug for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { kind, name, span } = self;
         write!(f, "Ident::{kind:?} ({span:?}: {name:?})")
     }
 }
-
 impl AstNode for Ident {
     fn get_span(&self) -> logos::Span {
         self.span.clone()
@@ -81,6 +79,22 @@ impl AstNode for Ident {
         };
         parser.advance_n(1)?;
         Ok(Self { kind, name, span })
+    }
+}
+impl Ident {
+    pub fn global(span: logos::Span, name: SmolStr) -> Self {
+        Self {
+            kind: IdentKind::Global,
+            name,
+            span,
+        }
+    }
+    pub fn local(span: logos::Span, name: SmolStr) -> Self {
+        Self {
+            kind: IdentKind::Local,
+            name,
+            span,
+        }
     }
 }
 

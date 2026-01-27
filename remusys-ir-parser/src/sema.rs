@@ -305,10 +305,22 @@ mod type_mapping {
             self.func.ret_ty = ret_ty;
             Ok(self)
         }
+        pub fn ir_return_type(&mut self, ty: ValTypeID) -> &mut Self {
+            self.func.ret_ty = ty;
+            self
+        }
+        pub fn reserve_args(&mut self, reserve_len: usize) -> &mut Self {
+            self.func.param_tys.reserve(reserve_len);
+            self
+        }
         pub fn add_argtype(&mut self, ty: &TypeAst) -> SemaRes<&mut Self> {
             let arg_ty = self.tmap.map_type(self.tctx, ty)?;
             self.func.param_tys.push(arg_ty);
             Ok(self)
+        }
+        pub fn ir_add_argtype(&mut self, ty: ValTypeID) -> &mut Self {
+            self.func.param_tys.push(ty);
+            self
         }
         pub fn is_vararg(&mut self, val: bool) -> &mut Self {
             self.func.is_vararg = val;
@@ -370,13 +382,17 @@ mod value_mapping {
             Self::default()
         }
 
-        pub fn insert(&mut self, name: SmolStr, value: impl IValueConvert) {
-            let repeats = match value.into_value() {
-                ValueSSA::Global(glob) => self.globals.insert(name.clone(), glob).is_some(),
-                val => self.locals.insert(name.clone(), val).is_some(),
+        pub fn insert(&mut self, name: SmolStr, value: impl IValueConvert) -> Result<(), ValueSSA> {
+            let repeated = match value.into_value() {
+                ValueSSA::Global(glob) => self
+                    .globals
+                    .insert(name.clone(), glob)
+                    .map(GlobalID::into_ir),
+                val => self.locals.insert(name.clone(), val),
             };
-            if repeats {
-                panic!("Symbol '{name}' is already defined");
+            match repeated {
+                Some(v) => Err(v),
+                None => Ok(()),
             }
         }
 

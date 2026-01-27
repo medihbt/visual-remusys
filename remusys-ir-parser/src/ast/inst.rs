@@ -9,6 +9,13 @@ use crate::{
     tokens::FinalToken,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InstSection {
+    Phi,
+    Inst,
+    Terminator,
+}
+
 #[derive(Debug)]
 pub enum InstKind {
     // basic block terminators
@@ -127,6 +134,19 @@ impl InstAst {
     pub fn set_id(&mut self, id: Ident) {
         self.span.start = id.span.start;
         self.id = Some(id);
+    }
+
+    pub fn get_section(&self) -> InstSection {
+        match &self.kind {
+            InstKind::Phi(_) => InstSection::Phi,
+            InstKind::Unreachable
+            | InstKind::RetVoid
+            | InstKind::Ret(_)
+            | InstKind::Jump(_)
+            | InstKind::Br(_)
+            | InstKind::Switch(_) => InstSection::Terminator,
+            _ => InstSection::Inst,
+        }
     }
 
     fn do_parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
