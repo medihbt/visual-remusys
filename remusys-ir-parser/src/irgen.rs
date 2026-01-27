@@ -366,7 +366,7 @@ impl<'a> IRGen<'a> {
             }
             self.generate_func(func_ast, func_ir)?;
         }
-        todo!("complete IR generation")
+        Ok(())
     }
 
     fn setup_global_frame(&mut self, funcs: &mut FuncList<'a>) -> IRGenRes {
@@ -416,6 +416,10 @@ impl<'a> IRGen<'a> {
         }
         let func_id = builder
             .build_id(self.ir)
+            .map_err(|_| IRGenErr::global_redef(header.get_span(), header.name.clone()))?;
+
+        self.symbols
+            .insert(header.name.clone(), func_id)
             .map_err(|_| IRGenErr::global_redef(header.get_span(), header.name.clone()))?;
         if !header.is_declare {
             funcs.push((func, func_id));
@@ -1032,7 +1036,12 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
             .map_err(Self::map_build_err(call_ast))?;
 
         for (idx, opuse) in call_inst.get_operands(allocs).iter().enumerate() {
-            self.push_use(*opuse, &call_ast.args[idx].val);
+            let op = if idx == 0 {
+                &call_ast.func
+            } else {
+                &call_ast.args[idx - 1].val
+            };
+            self.push_use(*opuse, op);
         }
         Ok(call_inst.raw_into())
     }
