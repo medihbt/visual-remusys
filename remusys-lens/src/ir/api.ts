@@ -1,0 +1,1 @@
+../../../remusys-wasm/ts/api.ts

@@ -3,13 +3,17 @@ use std::{collections::HashMap, str::FromStr};
 use logos::Span;
 use remusys_ir::{
     base::APInt,
-    ir::{inst::*, *},
+    ir::{indexed_ir::PoolAllocatedIndex, inst::*, *},
     typing::*,
 };
 use smallvec::SmallVec;
 use smol_str::{SmolStr, ToSmolStr, format_smolstr};
 
-use crate::{ast::*, sema::*};
+use crate::{
+    ast::*,
+    mapping::{IRFuncSrcMapping, IRSourceMapping},
+    sema::*,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum IRGenErrKind {
@@ -215,6 +219,7 @@ pub struct IRGen<'a> {
     symbols: SymbolMap,
     types: TypeMap,
     values: ValuePool,
+    pub mapping: IRSourceMapping,
 }
 
 impl<'a> IRGen<'a> {
@@ -226,6 +231,7 @@ impl<'a> IRGen<'a> {
             symbols: SymbolMap::default(),
             types: TypeMap::default(),
             values: ValuePool::default(),
+            mapping: IRSourceMapping::default(),
         }
     }
 
@@ -370,27 +376,48 @@ impl<'a> IRGen<'a> {
     }
 
     fn setup_global_frame(&mut self, funcs: &mut FuncList<'a>) -> IRGenRes {
+        let allocs = &self.ir.allocs;
+        self.mapping.funcs.reserve(self.ast.funcs.len());
         for func in &self.ast.funcs {
-            self.build_func_metadata(funcs, func)?;
+            let func_id = self.build_func_metadata(funcs, func)?;
+            self.mapping.funcs.push(IRFuncSrcMapping {
+                head_span: func.header.get_span(),
+                full_span: func.get_span(),
+                id: GlobalIndex::from_primary(func_id.raw_into(), allocs),
+                args: Vec::from_iter(func.header.args.iter().map(|a| a.get_span())),
+            });
         }
         let mut global_defs = Vec::with_capacity(self.ast.global_vars.len());
 
+        self.mapping.gvars.reserve(self.ast.global_vars.len());
         // 生成全局变量骨架, 有初始化的先弄一个 Zero 占位
         for glob in &self.ast.global_vars {
-            self.build_gvar_metadata(&mut global_defs, glob)?;
+            let gid = self.build_gvar_metadata(&mut global_defs, glob)?;
+            self.mapping.gvars.push((
+                glob.get_span(),
+                GlobalIndex::from_primary(gid.raw_into(), allocs),
+            ));
         }
 
         for info in global_defs {
             let GVarInfo { id, ty, ast } = info;
             if let Some(init) = &ast.init {
                 let initval = self.gen_value(ty, init)?;
-                id.enable_init(&self.ir.allocs, initval);
+                id.enable_init(allocs, initval);
+                self.mapping.uses.push((
+                    init.get_span(),
+                    UseIndex::from_primary(id.init_use(allocs), allocs),
+                ));
             }
         }
         Ok(())
     }
 
-    fn build_func_metadata(&mut self, funcs: &mut FuncList<'a>, func: &'a FuncAst) -> IRGenRes {
+    fn build_func_metadata(
+        &mut self,
+        funcs: &mut FuncList<'a>,
+        func: &'a FuncAst,
+    ) -> IRGenRes<FuncID> {
         let tctx = &self.ir.tctx;
         let functype = {
             let mut builder = FuncTypeBuilder::new(&mut self.types, tctx);
@@ -424,14 +451,14 @@ impl<'a> IRGen<'a> {
         if !header.is_declare {
             funcs.push((func, func_id));
         }
-        Ok(())
+        Ok(func_id)
     }
 
     fn build_gvar_metadata(
         &mut self,
         global_defs: &mut Vec<GVarInfo<'a>>,
         glob: &'a GlobalVarAst,
-    ) -> IRGenRes {
+    ) -> IRGenRes<GlobalID> {
         let ty = self.gen_type(&glob.ty)?;
         let mut gvar_builder = GlobalVarBuilder::new(glob.name.to_string(), ty);
         if glob.init.is_some() {
@@ -457,7 +484,7 @@ impl<'a> IRGen<'a> {
         self.symbols
             .insert(glob.name.clone(), gvar_id)
             .map_err(|_| IRGenErr::global_redef(glob.get_span(), glob.name.clone()))?;
-        Ok(())
+        Ok(gvar_id.raw_into())
     }
 
     fn generate_func(&mut self, func_ast: &'a FuncAst, func_ir: FuncID) -> IRGenRes {
@@ -532,10 +559,18 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
             bb_list.push(block);
         }
 
+        self.irgen.mapping.blocks.reserve(ast_body.blocks.len());
+
         // 加入基本块终止指令. 要求终止指令在基本块末尾.
         let ast_iter = ast_body.blocks.iter();
         let ir_iter = bb_list.iter().copied();
         for (ir_bb, ast_bb) in ir_iter.zip(ast_iter) {
+            // Push basic block source position into mapping
+            self.irgen
+                .mapping
+                .blocks
+                .push((ast_bb.get_span(), BlockIndex::from_primary(ir_bb, allocs)));
+
             ir_builder.set_focus(IRFocus::Block(ir_bb));
             let Some(last_inst) = ast_bb.insts.last() else {
                 let name = ast_bb.name_clone();
@@ -595,6 +630,10 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         self.push_use_by_value(u, val, op);
     }
     fn push_use_by_value(&mut self, u: UseID, val: ValueSSA, op: &'a Operand) {
+        self.irgen.mapping.uses.push((
+            op.get_span(),
+            UseIndex::from_primary(u, &self.irgen.ir.allocs),
+        ));
         let ValueSSA::ConstData(ConstData::Undef(ty)) = val else {
             return;
         };
@@ -610,22 +649,23 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         ir_builder: &mut IRBuilder<&'a Module>,
         ast_bb: &'a BlockAst,
         ast_inst: &'a InstAst,
-    ) -> IRGenRes {
+    ) -> IRGenRes<InstID> {
         use crate::ast::InstKind as I;
         let map_build_err = {
             let span = ast_inst.get_span();
             move |e: IRBuildError| IRGenErr::ir_build(span, e)
         };
         let allocs = &self.irgen.ir.allocs;
-        match &ast_inst.kind {
-            I::Unreachable => {
-                ir_builder.focus_set_unreachable().map_err(map_build_err)?;
-            }
-            I::RetVoid => {
-                ir_builder
-                    .build_inst(|allocs, _| RetInstID::new_uninit(allocs, ValTypeID::Void))
-                    .map_err(map_build_err)?;
-            }
+        let termi: InstID = match &ast_inst.kind {
+            I::Unreachable => ir_builder
+                .focus_set_unreachable()
+                .map_err(map_build_err)?
+                .1
+                .raw_into(),
+            I::RetVoid => ir_builder
+                .build_inst(|allocs, _| RetInstID::new_uninit(allocs, ValTypeID::Void))
+                .map_err(map_build_err)?
+                .raw_into(),
             I::Ret(ret_ast) => {
                 let ty = self.irgen.gen_type(&ret_ast.tyval.ty)?;
                 let ret_inst = ir_builder
@@ -636,12 +676,13 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
                     op_type: ty,
                     op: &ret_ast.tyval.val,
                 });
+                ret_inst.raw_into()
             }
-            I::Jump(label) => {
-                ir_builder
-                    .focus_set_jump_to(self.get_label(label)?)
-                    .map_err(map_build_err)?;
-            }
+            I::Jump(label) => ir_builder
+                .focus_set_jump_to(self.get_label(label)?)
+                .map_err(map_build_err)?
+                .1
+                .raw_into(),
             I::Br(br) => {
                 let then_bb = self.get_label(&br.then_bb)?;
                 let else_bb = self.get_label(&br.else_bb)?;
@@ -652,31 +693,24 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
                 let (_, brinst) = ir_builder
                     .focus_set_branch_to(cond, then_bb, else_bb)
                     .map_err(map_build_err)?;
-                if let ValueSSA::ConstData(ConstData::Undef(_)) = cond {
-                    self.use_queue.push(OperandInfo {
-                        op_use: brinst.cond_use(allocs),
-                        op_type: ValTypeID::Int(1),
-                        op: &br.cond.val,
-                    });
-                }
+                self.push_use_by_value(brinst.cond_use(allocs), cond, &br.cond.val);
+                brinst.raw_into()
             }
-            I::Switch(switch) => {
-                self.make_switch(ir_builder, switch)?;
-            }
+            I::Switch(switch) => self.make_switch(ir_builder, switch)?.raw_into(),
             _ => {
                 let name = ast_bb.name_clone();
                 return IRGenErr::block_not_terminated_err(ast_inst.get_span(), name);
             }
-        }
+        };
 
-        Ok(())
+        Ok(termi)
     }
 
     fn make_switch(
         &mut self,
         ir_builder: &mut IRBuilder<&'a Module>,
         switch: &'a SwitchAst,
-    ) -> IRGenRes {
+    ) -> IRGenRes<SwitchInstID> {
         let map_build_err = {
             let span = switch.get_span();
             move |e: IRBuildError| IRGenErr::ir_build(span, e)
@@ -721,14 +755,8 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         let switch_inst = ir_builder
             .build_inst(|allocs, _| switch_builder.build_id(allocs))
             .map_err(map_build_err)?;
-        if let ValueSSA::ConstData(ConstData::Undef(_)) = cond_val {
-            self.use_queue.push(OperandInfo {
-                op_use: switch_inst.discrim_use(allocs),
-                op_type: cond_ty,
-                op: &switch.cond.val,
-            });
-        }
-        Ok(())
+        self.push_use_by_value(switch_inst.discrim_use(allocs), cond_val, &switch.cond.val);
+        Ok(switch_inst)
     }
 
     fn map_build_err(ast: &dyn AstNode) -> impl (FnOnce(IRBuildError) -> IRGenErr) + 'static {
@@ -782,10 +810,14 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
             .insert_inst(phi_inst)
             .map_err(Self::map_build_err(phi_ast))?;
         for &[uval, ubb] in &*phi_inst.incoming_uses(allocs) {
+            let income_op = ops[&BlockID::from_ir(ubb.get_operand(allocs))];
+            self.irgen
+                .mapping
+                .uses
+                .push((income_op.get_span(), UseIndex::from_primary(uval, allocs)));
             let ValueSSA::ConstData(ConstData::Undef(_)) = uval.get_operand(allocs) else {
                 continue;
             };
-            let income_op = ops[&BlockID::from_ir(ubb.get_operand(allocs))];
             self.use_queue.push(OperandInfo {
                 op_use: uval,
                 op_type: ty,

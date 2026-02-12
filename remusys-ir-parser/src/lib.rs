@@ -7,6 +7,7 @@ use remusys_ir::{ir::Module, typing::ArchInfo};
 
 pub mod ast;
 pub mod irgen;
+pub mod mapping;
 pub mod parser;
 pub mod sema;
 pub mod tokens;
@@ -54,6 +55,11 @@ impl CompileErr {
             .unwrap_or(source.len());
         &source[start_pos..end_pos]
     }
+
+    pub fn dump_string(&self, source: &str, line_poses: &[usize]) -> String {
+        let lines_source = self.get_lines_source(source, line_poses);
+        format!("{self}\nAt source:\n{lines_source}")
+    }
 }
 
 pub fn source_to_ir(source: &str) -> Result<Module, CompileErr> {
@@ -68,12 +74,10 @@ pub fn source_to_ir(source: &str) -> Result<Module, CompileErr> {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, path::PathBuf};
-
+    use super::*;
     use remusys_ir::ir::{IRWriteOption, IRWriter};
     use smallvec::SmallVec;
-
-    use super::*;
+    use std::{io::Write, path::PathBuf};
 
     fn get_example_path() -> PathBuf {
         let project_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -106,9 +110,7 @@ mod tests {
         let module = match source_to_ir(&source) {
             Ok(m) => m,
             Err(e) => {
-                eprintln!("Compile error: {}", e);
-                eprintln!("At source:\n{}", e.get_lines_source(&source, &lines_map));
-                panic!("Compilation failed");
+                panic!("{}", e.dump_string(&source, &lines_map))
             }
         };
 
@@ -117,7 +119,7 @@ mod tests {
         writer.set_option(IRWriteOption::quiet());
         writer.fmt_module().unwrap();
 
-        let mut stdout = std::io::stdout();
+        let mut stdout = std::io::stdout().lock();
         stdout.write_all(&bytes).unwrap();
     }
 }

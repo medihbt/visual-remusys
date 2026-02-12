@@ -1,2 +1,5 @@
 /target
 .cargo/*
+remusys-wasm/pkg/*
+*/node_modules
+.DS_Store/*

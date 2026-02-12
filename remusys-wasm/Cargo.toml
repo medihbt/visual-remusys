@@ -11,11 +11,13 @@ lto = true
 opt-level = "s"
 
 [dependencies]
-remusys-ir = { path = "../remusys-ir" }
-remusys-lang = { path = "../remusys-lang" }
-remusys-ir-parser = { path = "../remusys-ir-parser" }
+remusys-ir = { path = "../remusys-ir", features = ["serde"] }
+remusys-lang = { path = "../remusys-lang", features = ["remusys-ir-integration"] }
+remusys-ir-parser = { path = "../remusys-ir-parser", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 smallvec = { version = "1.15", features = ["serde", "union"] }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
+smol_str = "0.3.5"
+thiserror = "2.0.18"
