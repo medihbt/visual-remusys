@@ -461,6 +461,15 @@ impl<'a> IRGen<'a> {
     ) -> IRGenRes<GlobalID> {
         let ty = self.gen_type(&glob.ty)?;
         let mut gvar_builder = GlobalVarBuilder::new(glob.name.to_string(), ty);
+
+        if let Some(align) = glob.align {
+            if !align.is_power_of_two() {
+                return IRGenErr::align_not_pwr_of2_err(glob.get_span(), align);
+            }
+            let align_log2 = align.ilog2() as u8;
+            gvar_builder.align_log(align_log2);
+        }
+
         if glob.init.is_some() {
             let zvalue =
                 ValueSSA::new_zero(ty).expect("internal error: failed to create zero value");
@@ -630,11 +639,13 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         self.push_use_by_value(u, val, op);
     }
     fn push_use_by_value(&mut self, u: UseID, val: ValueSSA, op: &'a Operand) {
-        self.irgen.mapping.uses.push((
-            op.get_span(),
-            UseIndex::from_primary(u, &self.irgen.ir.allocs),
-        ));
+        let allocs = &self.irgen.ir.allocs;
+        self.irgen
+            .mapping
+            .uses
+            .push((op.get_span(), UseIndex::from_primary(u, allocs)));
         let ValueSSA::ConstData(ConstData::Undef(ty)) = val else {
+            u.set_operand(allocs, val);
             return;
         };
         self.use_queue.push(OperandInfo {
@@ -728,7 +739,9 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         let cond_val = self.irgen.gen_value_or_undef(cond_ty, &switch.cond.val)?;
 
         let mut switch_builder = SwitchInstBuilder::new(IntType(bits));
-        switch_builder.default_bb(self.get_label(&switch.default_bb)?);
+        switch_builder
+            .default_bb(self.get_label(&switch.default_bb)?)
+            .discrim(cond_val);
         for case in &switch.cases {
             let case_val = match &case.discrim.val.kind {
                 OperandKind::Int(i) => {
@@ -810,7 +823,10 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
             .insert_inst(phi_inst)
             .map_err(Self::map_build_err(phi_ast))?;
         for &[uval, ubb] in &*phi_inst.incoming_uses(allocs) {
-            let income_op = ops[&BlockID::from_ir(ubb.get_operand(allocs))];
+            let incoming_bb = BlockID::from_ir(ubb.get_operand(allocs));
+            let Some(&income_op) = ops.get(&incoming_bb) else {
+                continue;
+            };
             self.irgen
                 .mapping
                 .uses

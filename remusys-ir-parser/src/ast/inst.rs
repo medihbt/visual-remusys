@@ -396,7 +396,10 @@ impl AstNode for SwitchAst {
         parser.advance_exact(&[FinalToken::Comma])?;
 
         let default_bb = Label::parse(parser)?;
-        parser.advance_exact(&[FinalToken::Comma, FinalToken::LBracket])?;
+        if let FinalToken::Comma = parser.peek0()?.0 {
+            parser.advance_n(1)?;
+        }
+        parser.advance_exact(&[FinalToken::LBracket])?;
 
         let mut cases: Vec<SwitchCase> = Vec::new();
         loop {
@@ -442,25 +445,45 @@ impl AstNode for PhiAst {
         self.span.clone()
     }
 
+    /// syntax: `phi <ty> [ <val0>, <label0> ], ...`
     fn parse(parser: &mut IRParser<'_>) -> IRParseRes<Self> {
         let begin_pos = parser.advance_exact(&[FinalToken::lit_word("phi")])?.start;
         let ty = TypeAst::parse(parser)?;
         let mut incomes: Vec<(Operand, Ident)> = Vec::new();
+
         loop {
-            match parser.peek0()? {
-                (FinalToken::Comma, _) => {
-                    parser.advance_exact(&[FinalToken::Comma, FinalToken::LBracket])?;
-                }
-                _ => break,
+            if parser.peek0_match(FinalToken::LBracket)?.0 {
+                parser.advance_exact(&[FinalToken::LBracket])?;
+            } else {
+                break;
             }
+
+            // parse the incoming value
             let operand = Operand::parse(parser)?;
+
+            // comma between value and label
             parser.advance_exact(&[FinalToken::Comma])?;
+
+            // parse label, must be local (e.g. %label)
             let label = Ident::parse(parser)?;
             if label.kind != IdentKind::Local {
                 return parse_err!(Unmatch label.get_span(), "Phi instruction label should be '%label'");
             }
+
+            // closing bracket
+            parser.advance_exact(&[FinalToken::RBracket])?;
+
             incomes.push((operand, label));
+
+            // if there's a comma, consume and continue to next incoming
+            if parser.peek0_match(FinalToken::Comma)?.0 {
+                parser.advance_n(1)?;
+                continue;
+            } else {
+                break;
+            }
         }
+
         let end_pos = parser.parser_pos();
         Ok(Self {
             span: begin_pos..end_pos,
