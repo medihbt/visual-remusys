@@ -77,7 +77,7 @@ mod tests {
     use super::*;
     use remusys_ir::ir::{FuncClone, FuncID, IRWriteOption, IRWriter, ISubGlobalID};
     use smallvec::SmallVec;
-    use std::{io::Write, path::PathBuf};
+    use std::path::PathBuf;
 
     fn get_example_path() -> PathBuf {
         let project_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -87,17 +87,15 @@ mod tests {
         project_dir.join("remusys-ir-parser").join("examples")
     }
 
-    #[test]
-    fn test_compile() {
-        let source_path = get_example_path().join("main.ll");
+    fn load_module(filename: &str) -> Module {
+        let source_path = get_example_path().join(filename);
         let source = match std::fs::read_to_string(&source_path) {
             Ok(s) => s,
             Err(e) => {
                 panic!("Failed to read example source file {source_path:?}: {e}")
             }
         };
-
-        let lines_map = {
+        let source_map = {
             let mut lines: SmallVec<[usize; 16]> = SmallVec::new();
             lines.push(0);
             let mut pos = 0;
@@ -107,20 +105,54 @@ mod tests {
             }
             lines
         };
-        let module = match source_to_ir(&source) {
+        match source_to_ir(&source) {
             Ok(m) => m,
             Err(e) => {
-                panic!("{}", e.dump_string(&source, &lines_map))
+                let e = e.dump_string(&source, &source_map);
+                panic!("Failed to compile example source file {source_path:?}: {e}")
             }
-        };
+        }
+    }
 
+    fn write_ir(module: &Module, name: &str) {
         let mut bytes = Vec::new();
-        let mut writer = IRWriter::from_module(&mut bytes, &module);
+        let mut writer = IRWriter::from_module(&mut bytes, module);
         writer.set_option(IRWriteOption::quiet());
         writer.fmt_module().unwrap();
 
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(&bytes).unwrap();
+        let output_path = get_example_path()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("target")
+            .join(name);
+        match std::fs::write(&output_path, &bytes) {
+            Ok(_) => (),
+            Err(e) => {
+                panic!("Failed to write IR to file {output_path:?}: {e}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_compile() {
+        let module = load_module("main.ll");
+        write_ir(&module, "main_out.ll");
+    }
+
+    fn clone_func(module: &mut Module, name: &str, new_name: &str, keep_recurse: bool) {
+        let func = module
+            .get_global_by_name(name)
+            .map(FuncID::raw_from)
+            .unwrap();
+        let mut fclone = FuncClone::new(module, func).unwrap();
+        fclone
+            .change_name(new_name)
+            .keep_recurse(keep_recurse)
+            .try_export()
+            .unwrap();
+        fclone.finish().unwrap();
     }
 
     /// source demo
@@ -144,77 +176,12 @@ mod tests {
     /// ```
     #[test]
     fn test_func_clone() {
-        let source = r#"
-        @str_red    = internal constant [3 x i8] c"red", align 8
-        @str_green  = internal constant [5 x i8] c"green", align 8
-        @str_blue   = internal constant [4 x i8] c"blue", align 8
+        let mut module = load_module("clone-func.ll");
 
-        define dso_local {ptr, i64} @color_get_name(i8 %color) {
-        entry:
-            switch i8 %color, label %default [
-                i8 0, label %case_red
-                i8 1, label %case_green
-                i8 2, label %case_blue
-            ]
-        case_red:
-            ; ret {ptr, i64} {ptr @str_red, i64 3}
-            br label %finish
-        case_green:
-            ; ret {ptr, i64} {ptr @str_green, i64 5}
-            br label %finish
-        case_blue:
-            ; ret {ptr, i64} {ptr @str_blue, i64 4}
-            br label %finish
-        default:
-            unreachable
-        finish:
-            %retval = phi {ptr, i64}
-                [{ptr @str_red, i64 3}, %case_red],
-                [{ptr @str_green, i64 5}, %case_green],
-                [{ptr @str_blue, i64 4}, %case_blue]
-            ret {ptr, i64} %retval
-        }
+        clone_func(&mut module, "color_get_name", "color_get_name_clone", false);
+        clone_func(&mut module, "fibonacci", "fibonacci_clone", false);
+        clone_func(&mut module, "fibonacci", "fibonacci_rclone", true);
 
-        @str_true  = internal constant [4 x i8] c"true", align 8
-        @str_false = internal constant [5 x i8] c"false", align 8
-
-        define dso_local {ptr, i64} @boolean_to_string(i1 %b) {
-            %res = select i1 %b, {ptr, i64} {ptr @str_true, i64 4}, {ptr @str_false, i64 5}
-            ret {ptr, i64} %res
-        }
-        "#;
-
-        let lines_map = {
-            let mut lines: SmallVec<[usize; 16]> = SmallVec::new();
-            lines.push(0);
-            let mut pos = 0;
-            for line in source.lines() {
-                pos += line.len() + 1;
-                lines.push(pos);
-            }
-            lines
-        };
-        let mut module = match source_to_ir(source) {
-            Ok(m) => m,
-            Err(e) => {
-                panic!("{}", e.dump_string(source, &lines_map))
-            }
-        };
-
-        let func = module
-            .get_global_by_name("color_get_name")
-            .map(FuncID::raw_from)
-            .unwrap();
-        let mut fclone = FuncClone::new(&mut module, func).unwrap();
-        fclone.change_name("cloned_func").try_export().unwrap();
-        fclone.finish().unwrap();
-
-        let mut bytes = Vec::new();
-        let mut writer = IRWriter::from_module(&mut bytes, &module);
-        writer.set_option(IRWriteOption::quiet());
-        writer.fmt_module().unwrap();
-
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(&bytes).unwrap();
+        write_ir(&module, "clone-func-out.ll");
     }
 }
