@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use remusys_ir::{
     base::APInt,
     ir::{
-        indexed_ir::{IndexedValue, PoolAllocatedIndex},
+        indexed_ir::{IPoolAllocatedIndex, IndexedValue},
         *,
     },
     opt::{CfgBlockStat, CfgDfsSeq, DominatorTree},

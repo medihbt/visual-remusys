@@ -462,7 +462,7 @@ dependencies = [
  "bitflags",
  "log",
  "mtb-entity-slab",
- "serde_core",
+ "serde",
  "slab",
  "smallvec",
  "smol_str",

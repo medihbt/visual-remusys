@@ -3,7 +3,7 @@ use std::{collections::HashMap, str::FromStr};
 use logos::Span;
 use remusys_ir::{
     base::APInt,
-    ir::{indexed_ir::PoolAllocatedIndex, inst::*, *},
+    ir::{indexed_ir::IPoolAllocatedIndex, inst::*, *},
     typing::*,
 };
 use smallvec::SmallVec;

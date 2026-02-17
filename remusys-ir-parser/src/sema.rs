@@ -1,4 +1,4 @@
-use remusys_ir::ir::ArrayBuildErr;
+use remusys_ir::{SymbolStr, ir::ArrayBuildErr};
 use smol_str::SmolStr;
 
 pub use self::type_mapping::*;
@@ -729,7 +729,7 @@ pub enum SemaErr {
     VectorLengthNotPowerOfTwo(usize),
 
     #[error("Value type kind is {0} and cannot match type {1}")]
-    ValueNotMeetType(String, String),
+    ValueNotMeetType(String, SymbolStr),
 
     #[error("{name} count mismatch: expected {expect}, got {real}")]
     AggrLengthMismatch {
@@ -741,8 +741,8 @@ pub enum SemaErr {
     AggrElemTypeMismatch {
         name: &'static str,
         index: usize,
-        expect: String,
-        real: String,
+        expect: SymbolStr,
+        real: SymbolStr,
     },
 
     #[error("Array building failed: {0}")]
@@ -752,6 +752,6 @@ pub enum SemaErr {
     SparseIndicesNotIncreasing,
 
     #[error("Sparse array default value type '{real}' does not match expected type '{expect}'")]
-    SparseDefaultTypeMismatch { expect: String, real: String },
+    SparseDefaultTypeMismatch { expect: SymbolStr, real: SymbolStr },
 }
 pub type SemaRes<T = ()> = Result<T, SemaErr>;

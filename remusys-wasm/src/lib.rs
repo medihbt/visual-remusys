@@ -187,6 +187,6 @@ pub fn ir_type_get_name(id: &str, ty: &str) -> Result<String, JsError> {
         if tyid.try_get_size(tctx).is_none() {
             return fmt_jserr!(res "invalid type id {ty:?}");
         }
-        Ok(tyid.get_display_name(tctx))
+        Ok(tyid.get_display_name(tctx).to_string())
     })
 }
