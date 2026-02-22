@@ -1,4 +1,6 @@
 /target
+/trash
+.github/*
 .cargo/*
 remusys-wasm/pkg/*
 */node_modules

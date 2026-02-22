@@ -3,7 +3,7 @@ use std::{collections::HashMap, str::FromStr};
 use logos::Span;
 use remusys_ir::{
     base::APInt,
-    ir::{indexed_ir::IPoolAllocatedIndex, inst::*, *},
+    ir::{inst::*, *},
     typing::*,
 };
 use smallvec::SmallVec;
@@ -383,7 +383,7 @@ impl<'a> IRGen<'a> {
             self.mapping.funcs.push(IRFuncSrcMapping {
                 head_span: func.header.get_span(),
                 full_span: func.get_span(),
-                id: GlobalIndex::from_primary(func_id.raw_into(), allocs),
+                id: func_id.raw_into(),
                 args: Vec::from_iter(func.header.args.iter().map(|a| a.get_span())),
             });
         }
@@ -393,10 +393,7 @@ impl<'a> IRGen<'a> {
         // 生成全局变量骨架, 有初始化的先弄一个 Zero 占位
         for glob in &self.ast.global_vars {
             let gid = self.build_gvar_metadata(&mut global_defs, glob)?;
-            self.mapping.gvars.push((
-                glob.get_span(),
-                GlobalIndex::from_primary(gid.raw_into(), allocs),
-            ));
+            self.mapping.gvars.push((glob.get_span(), gid.raw_into()));
         }
 
         for info in global_defs {
@@ -404,10 +401,9 @@ impl<'a> IRGen<'a> {
             if let Some(init) = &ast.init {
                 let initval = self.gen_value(ty, init)?;
                 id.enable_init(allocs, initval);
-                self.mapping.uses.push((
-                    init.get_span(),
-                    UseIndex::from_primary(id.init_use(allocs), allocs),
-                ));
+                self.mapping
+                    .uses
+                    .push((init.get_span(), id.init_use(allocs)));
             }
         }
         Ok(())
@@ -575,10 +571,7 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
         let ir_iter = bb_list.iter().copied();
         for (ir_bb, ast_bb) in ir_iter.zip(ast_iter) {
             // Push basic block source position into mapping
-            self.irgen
-                .mapping
-                .blocks
-                .push((ast_bb.get_span(), BlockIndex::from_primary(ir_bb, allocs)));
+            self.irgen.mapping.blocks.push((ast_bb.get_span(), ir_bb));
 
             ir_builder.set_focus(IRFocus::Block(ir_bb));
             let Some(last_inst) = ast_bb.insts.last() else {
@@ -640,10 +633,7 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
     }
     fn push_use_by_value(&mut self, u: UseID, val: ValueSSA, op: &'a Operand) {
         let allocs = &self.irgen.ir.allocs;
-        self.irgen
-            .mapping
-            .uses
-            .push((op.get_span(), UseIndex::from_primary(u, allocs)));
+        self.irgen.mapping.uses.push((op.get_span(), u));
         let ValueSSA::ConstData(ConstData::Undef(ty)) = val else {
             u.set_operand(allocs, val);
             return;
@@ -827,10 +817,7 @@ impl<'a: 't, 't> FuncGen<'a, 't> {
             let Some(&income_op) = ops.get(&incoming_bb) else {
                 continue;
             };
-            self.irgen
-                .mapping
-                .uses
-                .push((income_op.get_span(), UseIndex::from_primary(uval, allocs)));
+            self.irgen.mapping.uses.push((income_op.get_span(), uval));
             let ValueSSA::ConstData(ConstData::Undef(_)) = uval.get_operand(allocs) else {
                 continue;
             };

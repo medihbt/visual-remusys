@@ -75,7 +75,7 @@ pub fn source_to_ir(source: &str) -> Result<Module, CompileErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use remusys_ir::ir::{FuncClone, FuncID, IRWriteOption, IRWriter, ISubGlobalID};
+    use remusys_ir::ir::{FuncClone, FuncID, IRWriteOption, ISubGlobalID};
     use smallvec::SmallVec;
     use std::path::PathBuf;
 
@@ -115,11 +115,7 @@ mod tests {
     }
 
     fn write_ir(module: &Module, name: &str) {
-        let mut bytes = Vec::new();
-        let mut writer = IRWriter::from_module(&mut bytes, module);
-        writer.set_option(IRWriteOption::quiet());
-        writer.fmt_module().unwrap();
-
+        let bytes = remusys_ir::ir::module_tostring(module, IRWriteOption::quiet()).unwrap();
         let output_path = get_example_path()
             .parent()
             .unwrap()
