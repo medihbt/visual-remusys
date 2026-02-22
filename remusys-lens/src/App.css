@@ -156,3 +156,31 @@ html, body, #root {
   .app-main { flex-direction: column; height: auto }
   .right-panel { order: 2 }
 }
+
+/* Hide React Flow connection handles (small dots on node edges) */
+.react-flow__handle,
+.xyflow__handle,
+.react-flow__handle-top,
+.react-flow__handle-bottom,
+.react-flow__handle-left,
+.react-flow__handle-right {
+  display: none !important;
+}
+
+/* Node label styling: use monospace Cascadia, smaller, centered, and hide overflow */
+.react-flow__node {
+  font-family: var(--mono-font) !important;
+  font-size: 0.65rem !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  padding: 0 !important;
+}
+
+.react-flow__node * {
+  box-sizing: border-box !important;
+}

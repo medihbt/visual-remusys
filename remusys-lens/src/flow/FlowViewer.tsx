@@ -3,9 +3,16 @@ import '@xyflow/react/dist/style.css'
 import React from "react";
 import { layoutCfgDot, CFG_DOT_TEXT, extractLayoutsFromGraphviz } from './layout'
 
+export type FlowEdgeProps = ReactFlow.Edge<any> & {
+    data: {
+        mainPaths: string[]
+        arrowPaths: string[]
+    }
+};
+
 // Use any for edge props to avoid tight coupling with library Edge generic
-const RoutedFlowEdge: React.FC<any> = (props) => {
-    const { id, data } = props as any;
+const RoutedFlowEdge: React.FC<FlowEdgeProps> = (props) => {
+    const { id, data } = props;
     const main: string[] = Array.isArray(data?.mainPaths) ? data.mainPaths : []
     const arrows: string[] = Array.isArray(data?.arrowPaths) ? data.arrowPaths : []
 
@@ -21,7 +28,7 @@ const RoutedFlowEdge: React.FC<any> = (props) => {
     return (<g id={gid} pointerEvents="none">{mainElems}{arrowElems}</g>);
 }
 
-export type FlowViewerProps = ReactFlow.Node & {}
+export type FlowViewerProps = ReactFlow.Node<any> & {}
 
 export default function FlowViewer() {
     const edgeTypes = React.useMemo(() => ({ routed: RoutedFlowEdge }), [])
@@ -30,8 +37,8 @@ export default function FlowViewer() {
     const [edges, setEdges] = React.useState<ReactFlow.Edge<any>[]>([])
 
     React.useEffect(() => {
-        let mounted = true
-        ;(async () => {
+        let mounted = true;
+        (async () => {
             try {
                 const json = await layoutCfgDot(CFG_DOT_TEXT)
                 const { nodes: nlayout, edges: elayout } = extractLayoutsFromGraphviz(json)

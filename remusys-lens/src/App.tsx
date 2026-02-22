@@ -3,6 +3,8 @@ import './App.css'
 import 'react-reflex/styles.css'
 import LensViewer from './editor/LensViewer'
 import FlowViewer from './flow/FlowViewer'
+import React from 'react'
+import GuideView from './guide-view/GuideView'
 
 const IR_SOUCE: string = `define i32 @main() {
 entry:
@@ -25,6 +27,40 @@ exit:
 `
 
 export default function App() {
+  const flowReplaceText = <>
+    <h3>可视化视图, 使用 React Flow</h3>
+    <p>根据导航视图中锁定的对象展示不同的图</p>
+    <ul>
+      <li>模块全局: 函数调用图</li>
+      <li>函数: CFG / 支配树</li>
+      <li>基本块: DFG</li>
+      <li>指令: 数据流依赖图</li>
+    </ul>
+    <p>选择的框架</p>
+    <ul>
+      <li><a href="https://reactflow.dev">React Flow</a>: 这玩意搞树状结构或者 DAG 很好，但处理带环图非常糟糕，前向边和回边会交叉在一起打架</li>
+      <li><a href="">Cytoscape</a>: 没用过，不知道怎么个事儿</li>
+    </ul>
+  </>;
+  const guideViewReplaceText = <>
+    <h3>导航视图</h3>
+    <ul>
+      <li>从 Module 全局对象列表到当前锁定对象的多级菜单</li>
+      <li>可以锁定模块全局 / 函数 / 基本块 / 指令等对象</li>
+      <li>
+        到当前对象视图时展示对该对象的所有操作
+        <ul>
+          <li>模块全局: 显示全局量引用图(函数调用图)、模块全局源码视图...</li>
+          <li>函数: 显示 CFG / 支配树 / 调用者图; 给函数应用一个 Pass 开启一列时间线</li>
+          <li>基本块: 显示 DFG / 分析顺序依赖分割点 / 前驱后继</li>
+          <li>指令: 显示数据流依赖 / 相关指令列表</li>
+        </ul>
+      </li>
+      <li>选中一个对象后可以聚焦, 聚焦后源码视图和右侧可视化图发生改变</li>
+      <li>或者，把右侧的图中拖一个结点到导航视图中也可以聚焦到这个结点</li>
+    </ul>
+  </>;
+
   return (
     <div className="app-root">
       {/* 左右分栏：左侧编辑器，右侧流程图 */}
@@ -40,22 +76,9 @@ export default function App() {
               </ReflexElement>
               <ReflexSplitter />
               <ReflexElement minSize={50} flex={30}>
-                <h3>导航视图</h3>
-                <ul>
-                  <li>从 Module 全局对象列表到当前锁定对象的多级菜单</li>
-                  <li>可以锁定模块全局 / 函数 / 基本块 / 指令等对象</li>
-                  <li>
-                    到当前对象视图时展示对该对象的所有操作
-                    <ul>
-                      <li>模块全局: 显示全局量引用图(函数调用图)、模块全局源码视图...</li>
-                      <li>函数: 显示 CFG / 支配树 / 调用者图; 给函数应用一个 Pass 开启一列时间线</li>
-                      <li>基本块: 显示 DFG / 分析顺序依赖分割点 / 前驱后继</li>
-                      <li>指令: 显示数据流依赖 / 相关指令列表</li>
-                    </ul>
-                  </li>
-                  <li>选中一个对象后可以聚焦, 聚焦后源码视图和右侧可视化图发生改变</li>
-                  <li>或者，把右侧的图中拖一个结点到导航视图中也可以聚焦到这个结点</li>
-                </ul>
+                <React.Suspense fallback={guideViewReplaceText} >
+                  <GuideView />
+                </React.Suspense>
               </ReflexElement>
             </ReflexContainer>
           </div>
@@ -64,20 +87,9 @@ export default function App() {
         <ReflexSplitter />
 
         <ReflexElement flex={60}>
-          {/*<h3>可视化视图, 使用 React Flow</h3>
-          <p>根据导航视图中锁定的对象展示不同的图</p>
-          <ul>
-            <li>模块全局: 函数调用图</li>
-            <li>函数: CFG / 支配树</li>
-            <li>基本块: DFG</li>
-            <li>指令: 数据流依赖图</li>
-          </ul>
-          <p>选择的框架</p>
-          <ul>
-            <li><a href="https://reactflow.dev">React Flow</a>: 这玩意搞树状结构或者 DAG 很好，但处理带环图非常糟糕，前向边和回边会交叉在一起打架</li>
-            <li><a href="">Cytoscape</a>: 没用过，不知道怎么个事儿</li>
-          </ul> */}
-          <FlowViewer />
+          <React.Suspense fallback={flowReplaceText} >
+            <FlowViewer />
+          </React.Suspense>
         </ReflexElement>
       </ReflexContainer>
     </div>
