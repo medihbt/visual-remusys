@@ -1,162 +1,9 @@
-const blockInfo = [
-  {
-    /**
-     * 这种 ID 被称为 `IndexedID`, 语法是: `{pool type}:{real index}:{generation}`.
-     * 在 WASM 后端中, 这个 ID 会作为内存池的 Key 参与索引等.
-     *
-     * ## 不同类型的 ID 之间会不会冲突?
-     *
-     * 在同一个 Module 里的所有 Indexed ID 都不会冲突, 因为它们的 pool type 不同.
-     * 但是不同 Module 里的 Indexed ID 可能会冲突, 因为它们的 pool type 和 real index 都可能相同.
-     * 好在 Visual Remusys 中不怎么需要处理多个 Module 之间的关系, 也就不需要担心这个问题了.
-     *
-     * ## 这个 ID 的 generation 是什么?
-     *
-     * generation 是一个版本号, 每当这个 ID 被重新分配时, generation 就会增加.
-     * 这样就可以区分同一个 real index 的不同版本的 ID.
-     * 
-     * generation 的取值是 [1, 65535], 0 被保留作为无效 ID 的 generation.
-     * 也就是说, 当 generation 达到 65535 时, 再增加就会回绕到 1.
-     */
-    id: "b:1:1",
-    name: "entry",
-    sourceRange: {
-      // 示例 Source Range, 实际定义参照 Monaco Editor 的 IRange 接口
-      begin: { line: 2, column: 1 }, end: { line: 4, column: 1 }
-    },
-    insts: [
-      {
-        id: "i:1:1",
-        opcode: "br",
-        kind: "terminator",
-        sourceRange: {
-          begin: { line: 3, column: 3 }, end: { line: 3, column: 23 }
-        }
-      }
-    ]
-  }, {
-    id: "b:2:1",
-    name: "while.cond",
-    sourceRange: {
-      begin: { line: 4, column: 1 }, end: { line: 7, column: 1 }
-    },
-    insts: [
-      {
-        id: "i:2:1",
-        opcode: "call",
-        kind: "normal",
-        sourceRange: {
-          begin: { line: 5, column: 3 }, end: { line: 5, column: 26 }
-        }
-      },
-      {
-        id: "i:3:1",
-        opcode: "br",
-        kind: "terminator",
-        sourceRange: {
-          begin: { line: 6, column: 3 }, end: { line: 6, column: 46 }
-        }
-      }
-    ]
-  }, {
-    id: "b:3:1",
-    name: "while.body",
-    sourceRange: {
-      begin: { line: 7, column: 1 }, end: { line: 10, column: 1 }
-    },
-    insts: [
-      {
-        id: "i:4:1",
-        opcode: "call",
-        kind: "normal",
-        sourceRange: {
-          begin: { line: 8, column: 3 }, end: { line: 8, column: 24 }
-        }
-      },
-      {
-        id: "i:5:1",
-        opcode: "br",
-        kind: "terminator",
-        sourceRange: {
-          begin: { line: 9, column: 3 }, end: { line: 9, column: 23 }
-        }
-      }
-    ]
-  }, {
-    id: "b:4:1",
-    name: "exit",
-    sourceRange: {
-      begin: { line: 10, column: 1 }, end: { line: 12, column: 1 }
-    },
-    insts: [
-      {
-        id: "i:6:1",
-        opcode: "ret",
-        kind: "terminator",
-        sourceRange: {
-          begin: { line: 11, column: 3 }, end: { line: 11, column: 19 }
-        }
-      }
-    ]
-  }
-];
-
-const moduleInfo = {
-  name: "demo-module.ll",
-  overview_source: `
-@arr = global [10 x i32] zeroinitializer, align 16
-@arr2 = external global [10 x i32], align 16
-
-define i32 @main() { ... }
-`,
-  gvars: [
-    {
-      id: "g:1:1",
-      name: "arr",
-      type_id: "[10 x i32]",
-      source: "@arr = global [10 x i32] zeroinitializer, align 16",
-      operands: [
-        {
-          id: "u1:1",
-          type_id: "[10 x i32]",
-          source_range: {
-            begin: { line: 1, column: 26 }, end: { line: 1, column: 41 }
-          }
-        }
-      ]
-    },
-    {
-      id: "g:2:1",
-      name: "arr2",
-      type_id: "[10 x i32]",
-      source: "@arr2 = external global [10 x i32], align 16",
-      operands: [],
-    }
-  ],
-  funcs: [
-    {
-      id: "g:3:1",
-      name: "main",
-      source: `define i32 @main() {
-entry:
-  br label %while.cond
-while.cond:
-  %cond = call i1 @cond()
-  br i1 %cond, label %while.body, label %exit
-while.body:
-  call void @body()
-  br label %while.cond
-exit:
-  ret i32 0
-}
-`,
-      blocks: blockInfo,
-    }
-  ]
-};
+import type { Node, NodeProps } from '@xyflow/react';
+import { ReactFlow, Controls, Background } from '@xyflow/react';
+import React from 'react';
 
 /* DO NOT DELETE: load this if fail */
-const GuideViewText = <>
+export const GuideViewText = <>
   <h3>导航视图</h3>
   <p>从 Module 全局对象到当前锁定对象的 React Flow 树状视图, 展现“模块 - 函数 - 基本块 - 指令”的 IR 模块层次架构，在这个架构上提供导航和聚焦功能。</p>
   <h3>结点</h3>
@@ -212,6 +59,19 @@ const GuideViewText = <>
   <p>在 demo 阶段, 所有与具体功能相关联的选项都不要实现, 弹一个 alert 出来即可.</p>
 </>;
 
+export type GuideNode = Node<{ name: string }, 'guideNode'>;
+export type GuideNodeProps = NodeProps<GuideNode>;
+
+const GuideNode: React.FC<GuideNodeProps> = (props) => {
+  return <div>{props.data.name}</div>;
+}
+
 export default function GuideView() {
-  return GuideViewText;
+  const nodeTypes = React.useMemo(() => ({ guideNode: GuideNode }), [])
+  return <React.Suspense fallback={GuideViewText}>
+    <ReactFlow nodeTypes={nodeTypes}>
+      <Background />
+      <Controls />
+    </ReactFlow>
+  </React.Suspense>;
 }

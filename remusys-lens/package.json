@@ -15,6 +15,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@viz-js/viz": "^3.24.0",
     "@xyflow/react": "^12.10.1",
+    "dagre": "^0.8.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-reflex": "^5.0.5"
