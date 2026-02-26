@@ -1,3 +1,5 @@
+import * as Wasm from "remusys-wasm";
+
 /**
  * 池分配的 Indexed ID 类型, 格式: `{pool type}:{slot index}:{slot generation}`
  *
@@ -146,24 +148,21 @@ export type ValueDt =
   | { ZeroInit: AggrTypeID }
   | { FuncArg: [GlobalID, number] }
   | RefValueDt;
-export type ReferenceDt =
+export type PoolAllocatedID =
   | RefValueDt
   | { Use: UseID }
   | { JumpTarget: JumpTargetID };
 
-export type IDWithSourceLoc = ReferenceDt | { FuncArg: [GlobalID, number] };
+export type SourceTrackable = PoolAllocatedID | { FuncArg: [GlobalID, number] };
 
 export function irTypeGetName(_t: ValTypeID): string {
   throw new Error("TODO");
 }
 
 export type ModuleBrief = { id: string };
-export type SourceTy = "IR" | "SysY";
-export function irCompileModule(
-  _source_ty: SourceTy,
-  _source: string,
-): ModuleBrief {
-  throw new Error("TODO");
+export type SourceTy = "ir" | "sysy";
+export function irCompileModule(source_ty: SourceTy, source: string): ModuleBrief {
+  return Wasm.Api.compile_module(source_ty, source);
 }
 
 export type Linkage = "External" | "DSOLocal" | "Private";
@@ -185,7 +184,7 @@ type GlobalObjBase = {
 export type FuncArgDt = {
   name: string;
   ty: ValTypeID;
-  loc: SourceLoc;
+  source_loc: SourceLoc;
 };
 export type FuncObjDt = GlobalObjBase & {
   typeid: "Func";
@@ -203,8 +202,8 @@ export type ModuleGlobalsDt = {
   overview_src: string;
   globals: GlobalObjBase[];
 };
-export function irGetModuleGlobals(_module_id: string): ModuleGlobalsDt {
-  throw new Error("TODO");
+export function irGetModuleGlobals(module_id: string): ModuleGlobalsDt {
+  return Wasm.Api.get_module_globals(module_id);
 }
 export function irLoadGlobalObj(
   _module_id: string,
@@ -259,7 +258,7 @@ export type UseDt = {
 };
 type InstBase = {
   id: InstID;
-  name: string | null;
+  name?: string;
   opcode: Opcode;
   operands: UseDt[];
   source_loc: SourceLoc;
@@ -278,29 +277,30 @@ export function irLoadInst(_inst_id: InstID): InstDt {
   throw new Error("TODO");
 }
 
-export type SourceRangeUpdate = {
-  id: IDWithSourceLoc;
+export type SourceLocUpdate = {
+  id: SourceTrackable;
   new_loc: SourceLoc;
 };
-export type SourceUpdate = {
+export type SourceUpdates = {
   scope: "Func" | "Module";
   source: string;
-  ranges: SourceRangeUpdate[];
+  ranges: SourceLocUpdate[];
+  elliminated: SourceTrackable[];
 };
 export function irUpdateFuncSource(
   _module_id: string,
   _func: GlobalID,
-): SourceUpdate {
+): SourceUpdates {
   throw new Error("TODO");
 }
-export function irUpdateModuleOverviewSource(_module_id: string): SourceUpdate {
+export function irUpdateModuleOverviewSource(_module_id: string): SourceUpdates {
   throw new Error("TODO");
 }
 export function irRenameID(
   _module_id: string,
-  _id: IDWithSourceLoc,
+  _id: SourceTrackable,
   _new_name: string,
-): SourceUpdate {
+): SourceUpdates {
   throw new Error("TODO");
 }
 export function irValueGetUsedBy(_module_id: string, _val: ValueDt): UseID[] {

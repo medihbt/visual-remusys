@@ -18,7 +18,8 @@
     "dagre": "^0.8.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-reflex": "^5.0.5"
+    "react-reflex": "^5.0.5",
+    "remusys-wasm": "file:../remusys-wasm/pkg/remusys-wasm-0.1.0.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
