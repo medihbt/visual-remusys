@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type {
   IRArchObj,
@@ -34,18 +34,24 @@ const formatID = (id: string) => {
 };
 
 // 获取子节点显示信息
-const getChildDisplayInfo = (child: GuideNodeChildStat) =>
-  child.expanded === false
-    ? {
-        label: child.label,
-        ir_obj: null as IRArchObj,
-        svgIcon: svgIconFromNodeType(child.typeid),
-      }
-    : {
-        label: child.data.label,
-        ir_obj: child.data.ir_obj,
-        svgIcon: svgIconFromNodeType(getObjText(child.data.ir_obj)),
-      };
+const getChildDisplayInfo = (child: GuideNodeChildStat) => {
+  if (child.expanded) {
+    const irObj = child.data.ir_obj;
+    const label = child.data.label;
+    const nodeType = getObjText(irObj);
+    return {
+      label: label,
+      ir_obj: irObj,
+      svgIcon: svgIconFromNodeType(nodeType),
+    };
+  } else {
+    return {
+      label: child.label,
+      ir_obj: null as IRArchObj,
+      svgIcon: svgIconFromNodeType(child.typeid),
+    };
+  }
+};
 
 // 获取子节点行背景色
 const getChildRowBackgroundColor = (child: GuideNodeChildStat) =>
@@ -150,7 +156,7 @@ const getNodeDisplayName = (ir_obj: IRArchObj, label: string) => {
     case "Inst":
     case "Phi":
     case "Terminator":
-      return ir_obj.opcode || label || "instruction";
+      return ir_obj.name || label;
     default:
       return label;
   }
@@ -159,22 +165,75 @@ const getNodeDisplayName = (ir_obj: IRArchObj, label: string) => {
 type GuideNodeProps = NodeProps<GuideNode>;
 
 export const GuideNodeComp: React.FC<GuideNodeProps> = ({ data, id }) => {
-  const { label, ir_obj, children } = data;
+  const { label, ir_obj, children, onToggleChild, onMenuOpen, path } = data;
   const nodeType = getObjText(ir_obj);
   const displayName = getNodeDisplayName(ir_obj, label);
   const svgIcon = svgIconFromNodeType(nodeType);
+  const irId =
+    ir_obj && typeof ir_obj === "object" && "id" in ir_obj
+      ? String(ir_obj.id)
+      : null;
+
+  const menuItems = useMemo(() => {
+    const items: { key: string; label: string }[] = [
+      { key: "focus", label: "聚焦" },
+      { key: "expand-one", label: "展开本级" },
+      { key: "expand-all", label: "展开所有" },
+      { key: "rename", label: "重命名" },
+    ];
+
+    if (nodeType === "Module") {
+      items.push({ key: "module-ref", label: "显示引用图" });
+      return items;
+    }
+
+    if (nodeType === "Func" || nodeType === "ExternFunc") {
+      items.push(
+        { key: "func-cfg", label: "显示 CFG" },
+        { key: "func-dom", label: "显示支配树" },
+        { key: "func-callers", label: "显示调用者图" },
+        { key: "func-pass", label: "应用 Pass" },
+      );
+      return items;
+    }
+
+    if (nodeType === "Block") {
+      items.push(
+        { key: "block-dfg", label: "显示 DFG" },
+        { key: "block-split", label: "分析顺序依赖分割点" },
+        { key: "block-preds", label: "前驱后继" },
+      );
+      return items;
+    }
+
+    if (nodeType === "Inst" || nodeType === "Phi" || nodeType === "Terminator") {
+      items.push(
+        { key: "inst-dataflow", label: "显示数据流依赖" },
+        { key: "inst-related", label: "相关指令列表" },
+      );
+      if (ir_obj && typeof ir_obj === "object" && "opcode" in ir_obj) {
+        if (ir_obj.opcode === "call") {
+          items.push({ key: "inst-inline", label: "内联 (调用指令)" });
+        }
+      }
+      return items;
+    }
+
+    return items;
+  }, [ir_obj, nodeType]);
 
   const handleMenuClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (nodeType === "Module") {
-      alert(`操作菜单: ${displayName}\n类型: 模块`);
-    } else {
-      const { poolType, slotIndex, slotGeneration } = parseID(id);
-      const poolDesc = getPoolTypeDescription(poolType);
-      alert(
-        `操作菜单: ${displayName}\nID: ${formatID(id)}\n类型: ${poolDesc}\n槽索引: ${slotIndex}\n槽代: ${slotGeneration}`,
-      );
-    }
+    if (!onMenuOpen) return;
+    onMenuOpen({
+      items: menuItems,
+      displayName,
+      nodeType,
+      idText: irId ?? id,
+      path,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
   };
 
   const handleFocusClick = (e: React.MouseEvent) => {
@@ -182,15 +241,21 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = ({ data, id }) => {
     if (nodeType === "Module") {
       alert(`聚焦到: ${displayName}\n类型: 模块`);
     } else {
-      const { poolType } = parseID(id);
+      const { poolType } = parseID(irId ?? id);
       const poolDesc = getPoolTypeDescription(poolType);
-      alert(`聚焦到: ${displayName}\nID: ${formatID(id)}\n类型: ${poolDesc}`);
+      alert(
+        `聚焦到: ${displayName}\nID: ${formatID(irId ?? id)}\n类型: ${poolDesc}`,
+      );
     }
   };
 
   const handleChildClick = (index: number, e: React.MouseEvent) => {
     e.stopPropagation();
     const child = children[index];
+    if (onToggleChild) {
+      onToggleChild(child.path);
+      return;
+    }
     const message =
       child.expanded === false
         ? `展开子节点: ${child.label}\n点击整行任意位置展开`
@@ -291,7 +356,7 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = ({ data, id }) => {
   };
 
   return (
-    <>
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <Handle type="target" position={Position.Left} isConnectable={true} />
       <div
         style={{
@@ -316,11 +381,21 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = ({ data, id }) => {
             backgroundColor: "#f9fafb",
             borderBottom: "1px solid #e5e7eb",
             cursor: "pointer",
+            position: "relative",
           }}
-          onClick={handleFocusClick}
+          onDoubleClick={handleFocusClick}
           onContextMenu={(e) => {
             e.preventDefault();
-            handleMenuClick(e);
+            if (!onMenuOpen) return;
+            onMenuOpen({
+              items: menuItems,
+              displayName,
+              nodeType,
+              idText: irId ?? id,
+              path,
+              clientX: e.clientX,
+              clientY: e.clientY,
+            });
           }}
         >
           {/* 类型图标 */}
@@ -435,6 +510,6 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = ({ data, id }) => {
         </div>
       </div>
       <Handle type="source" position={Position.Right} isConnectable={true} />
-    </>
+    </div>
   );
 };

@@ -1,9 +1,27 @@
 import { type Node, type Edge } from "@xyflow/react";
-import { ReactFlow, Controls, Background } from "@xyflow/react";
+import {
+  ReactFlow,
+  Controls,
+  Background,
+  type ReactFlowInstance,
+  type NodeMouseHandler,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import * as dagre from "dagre";
-import React, { useEffect, useState } from "react";
-import type { BlockDt, FuncObjDt, GlobalObjDt, InstDt } from "../ir/ir";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  BlockDt,
+  FuncObjDt,
+  GlobalObjDt,
+  InstDt,
+  SourceLoc,
+} from "../ir/ir";
 import { GuideNodeComp } from "./components/GuideNodeComp";
 
 /* DO NOT DELETE: load this if fail */
@@ -116,7 +134,7 @@ const GuideViewText = (
   </>
 );
 
-export type IRArchObj = GlobalObjDt | BlockDt | InstDt | null;
+export type IRArchObj = GlobalObjDt | FuncObjDt | BlockDt | InstDt | null;
 export type IRArchObjTy =
   | "Module"
   | "Global"
@@ -158,14 +176,124 @@ export type GuideNodeData = {
   label: string;
   ir_obj: IRArchObj;
   children: GuideNodeChildStat[];
+  path: string;
+  onToggleChild?: (childPath: string) => void;
+  onMenuOpen?: (payload: GuideMenuPayload) => void;
 };
 
 export type GuideNode = Node<GuideNodeData, "guideNode">;
 export type GuideNodeChildStat =
-  | { expanded: false; typeid: IRArchObjTy; label: string }
-  | { expanded: true; data: GuideNodeData };
+  | { expanded: false; typeid: IRArchObjTy; label: string; path: string }
+  | { expanded: true; data: GuideNodeData; path: string };
+
+export type GuideMenuItem = { key: string; label: string };
+export type GuideMenuPayload = {
+  items: GuideMenuItem[];
+  displayName: string;
+  nodeType: IRArchObjTy;
+  idText: string;
+  path: string;
+  clientX: number;
+  clientY: number;
+};
+type GuideMenuState = GuideMenuPayload & {
+  left: number;
+  top: number;
+};
 
 const nodeTypes = { guideNode: GuideNodeComp };
+
+type MockTreeNode = {
+  label: string;
+  ir_obj: IRArchObj;
+  typeid: IRArchObjTy;
+  children: MockTreeNode[];
+};
+
+function getMockChildPath(parentPath: string, index: number): string {
+  return `${parentPath}/${index}`;
+}
+
+function getParentPath(path: string): string {
+  const parts = path.split("/");
+  if (parts.length <= 1) return path;
+  return parts.slice(0, -1).join("/") || path;
+}
+
+function getMockNodeByPath(
+  root: MockTreeNode,
+  path: string,
+): MockTreeNode | null {
+  const parts = path.split("/").slice(1);
+  let current: MockTreeNode = root;
+  for (const part of parts) {
+    const index = Number(part);
+    if (!Number.isInteger(index) || !current.children[index]) {
+      return null;
+    }
+    current = current.children[index];
+  }
+  return current;
+}
+
+function collectDescendantPaths(
+  root: MockTreeNode,
+  path: string,
+): string[] {
+  const node = getMockNodeByPath(root, path);
+  if (!node) return [];
+  const paths: string[] = [];
+  const dfs = (current: MockTreeNode, currentPath: string) => {
+    current.children.forEach((child, index) => {
+      const childPath = getMockChildPath(currentPath, index);
+      paths.push(childPath);
+      dfs(child, childPath);
+    });
+  };
+  dfs(node, path);
+  return paths;
+}
+
+function buildGuideTree(
+  root: MockTreeNode,
+  path: string,
+  expandedMap: Record<string, boolean>,
+  onToggleChild: (childPath: string) => void,
+  onMenuOpen: (payload: GuideMenuPayload) => void,
+): GuideNodeData {
+  const children: GuideNodeChildStat[] = root.children.map((child, index) => {
+    const childPath = getMockChildPath(path, index);
+    const isExpanded = !!expandedMap[childPath];
+    if (!isExpanded) {
+      return {
+        expanded: false,
+        typeid: child.typeid,
+        label: child.label,
+        path: childPath,
+      };
+    }
+    return {
+      expanded: true,
+      data: buildGuideTree(
+        child,
+        childPath,
+        expandedMap,
+        onToggleChild,
+        onMenuOpen,
+      ),
+      path: childPath,
+    };
+  });
+
+  return {
+    label: root.label,
+    ir_obj: root.ir_obj,
+    children,
+    path,
+    onToggleChild,
+    onMenuOpen,
+  };
+}
 
 function layoutNodes(
   nodes: GuideNode[],
@@ -258,7 +386,7 @@ function makeNodes(root: GuideNodeData): [GuideNode[], Edge[]] {
   const edges: Edge[] = [];
 
   function dfs_nodes(nodeData: GuideNodeData): GuideNode {
-    const nodeId = `n${nodes.length}`;
+    const nodeId = nodeData.path;
     const node: GuideNode = {
       id: nodeId,
       type: "guideNode",
@@ -284,11 +412,6 @@ function makeNodes(root: GuideNodeData): [GuideNode[], Edge[]] {
         id: `edge-${nodeId}-${childId}`,
         source: nodeId,
         target: childId,
-        animated: true,
-        style: {
-          strokeColor: "black",
-          strokeWidth: 3,
-        },
       };
       edges.push(edge);
     }
@@ -311,10 +434,11 @@ exit:
   ret i32 0
 }
 `;
-function makeMain(): GuideNodeData {
+function makeMainFuncMock(): MockTreeNode {
   const entryBB: BlockDt = {
     typeid: "Block",
     id: "b:1:1",
+    name: "entry",
     source_loc: {
       begin: { line: 2, column: 1 },
       end: { line: 3, column: 23 },
@@ -348,6 +472,7 @@ function makeMain(): GuideNodeData {
   const whileCondBB: BlockDt = {
     typeid: "Block",
     id: "b:2:1",
+    name: "while.cond",
     source_loc: {
       begin: { line: 4, column: 1 },
       end: { line: 6, column: 23 },
@@ -425,6 +550,7 @@ function makeMain(): GuideNodeData {
   const whileBodyBB: BlockDt = {
     typeid: "Block",
     id: "b:3:1",
+    name: "while.body",
     source_loc: {
       begin: { line: 7, column: 1 },
       end: { line: 9, column: 23 },
@@ -481,6 +607,7 @@ function makeMain(): GuideNodeData {
   const exitBB: BlockDt = {
     typeid: "Block",
     id: "b:4:1",
+    name: "exit",
     source_loc: {
       begin: { line: 10, column: 1 },
       end: { line: 11, column: 12 },
@@ -526,57 +653,134 @@ function makeMain(): GuideNodeData {
     args: [],
     blocks: [entryBB, whileCondBB, whileBodyBB, exitBB],
   };
+  const mainChildren: MockTreeNode[] = (mainFunc.blocks || []).map((bb) => {
+    const instChildren: MockTreeNode[] = bb.insts.map((inst) => {
+      return {
+        label: inst.name || `${inst.id} (${inst.opcode})`,
+        ir_obj: inst,
+        typeid: getObjText(inst),
+        children: [],
+      };
+    });
+    return {
+      label: `%${bb.name || bb.id}`,
+      ir_obj: bb,
+      typeid: "Block",
+      children: instChildren,
+    };
+  });
+
   return {
     label: "@main",
     ir_obj: mainFunc,
-    children: (mainFunc.blocks || []).map((bb) => {
-      return {
-        expanded: true,
-        data: {
-          label: `%${bb.name || bb.id}`,
-          ir_obj: bb,
-          children: bb.insts.map((inst) => {
-            return {
-              expanded: false,
-              typeid: "Inst",
-              label: inst.name || inst.id,
-            };
-          }),
-        },
-      };
-    }),
+    typeid: "Func",
+    children: mainChildren,
+  };
+}
+
+function makeFuncMock(
+  name: string,
+  id: string,
+  blocks?: BlockDt[],
+): MockTreeNode {
+  const defaultLoc: SourceLoc = {
+    begin: { line: 1, column: 1 },
+    end: { line: 1, column: 1 },
+  };
+  const funcObj: FuncObjDt = {
+    typeid: "Func",
+    id: id as FuncObjDt["id"],
+    name,
+    linkage: "External",
+    ty: "func:0",
+    overview_loc: defaultLoc,
+    source: "",
+    ret_ty: "i32",
+    args: [],
+  };
+  if (blocks !== undefined) {
+    funcObj.blocks = blocks;
+  }
+  return {
+    label: name,
+    ir_obj: funcObj,
+    typeid: getObjText(funcObj),
+    children: [],
+  };
+}
+
+function buildMockTree(): MockTreeNode {
+  const mainFunc = makeMainFuncMock();
+  const externCalc = makeFuncMock("calculate", "g:1:1");
+  const helperFunc = makeFuncMock("helper", "g:2:1", []);
+  return {
+    label: "main_module",
+    ir_obj: null,
+    typeid: "Module",
+    children: [mainFunc, externCalc, helperFunc],
   };
 }
 
 export default function GuideView() {
   const [nodes, setNodes] = useState<GuideNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [menuState, setMenuState] = useState<GuideMenuState | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const mockRoot = useMemo(() => buildMockTree(), []);
+
+  const handleToggleChild = useCallback(
+    (childPath: string) => {
+      setExpandedMap((prev) => {
+        const isExpanded = !!prev[childPath];
+        const next = { ...prev };
+        if (isExpanded) {
+          setFocusedPath(getParentPath(childPath));
+          delete next[childPath];
+          const descendants = collectDescendantPaths(mockRoot, childPath);
+          descendants.forEach((path) => {
+            delete next[path];
+          });
+          return next;
+        }
+        setFocusedPath(childPath);
+        next[childPath] = true;
+        return next;
+      });
+    },
+    [mockRoot],
+  );
+
+  const handleMenuOpen = useCallback((payload: GuideMenuPayload) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = payload.clientX - rect.left;
+    const top = payload.clientY - rect.top;
+    setMenuState({ ...payload, left, top });
+  }, []);
+
+  const handleMenuClose = useCallback(() => {
+    setMenuState(null);
+  }, []);
+
+  const guideRoot = useMemo(
+    () =>
+      buildGuideTree(
+        mockRoot,
+        "root",
+        expandedMap,
+        handleToggleChild,
+        handleMenuOpen,
+      ),
+    [mockRoot, expandedMap, handleToggleChild, handleMenuOpen],
+  );
 
   useEffect(() => {
-    // 创建示例根节点数据
-    const rootNodeData: GuideNodeData = {
-      label: "main_module",
-      ir_obj: null,
-      children: [
-        {
-          expanded: true,
-          data: makeMain(),
-        },
-        {
-          expanded: false,
-          typeid: "ExternFunc",
-          label: "calculate",
-        },
-        {
-          expanded: false,
-          typeid: "Func",
-          label: "helper",
-        },
-      ],
-    };
-
     // 生成节点和边
-    const [initialNodes, initialEdges] = makeNodes(rootNodeData);
+    const [initialNodes, initialEdges] = makeNodes(guideRoot);
 
     // 应用布局
     const { nodes: layoutedNodes, edges: layoutedEdges } = layoutNodes(
@@ -589,12 +793,25 @@ export default function GuideView() {
       setNodes(layoutedNodes);
       setEdges(layoutedEdges);
     });
-  }, []);
+  }, [guideRoot]);
+
+  useEffect(() => {
+    if (!focusedPath || !rfInstance) return;
+    const node = nodes.find((item) => item.id === focusedPath);
+    if (!node) return;
+    const width = Number(node.style?.width ?? node.width ?? 0) || 0;
+    const height = Number(node.style?.height ?? node.height ?? 0) || 0;
+    const centerX = node.position.x + width / 2;
+    const centerY = node.position.y + height / 2;
+    rfInstance.setCenter(centerX, centerY, { zoom: 1.05, duration: 200 });
+  }, [focusedPath, nodes, rfInstance]);
 
   // 处理节点点击
-  const handleNodeClick = (event: React.MouseEvent, node: GuideNode) => {
+  const handleNodeClick: NodeMouseHandler = (event, node) => {
     event.stopPropagation();
-    alert(`点击了节点: ${node.data.label}\nID: ${node.id}`);
+    const data = node.data as GuideNodeData | undefined;
+    const label = data?.label ?? node.id;
+    alert(`点击了节点: ${label}\nID: ${node.id}`);
   };
 
   // 处理边点击
@@ -603,21 +820,126 @@ export default function GuideView() {
     alert(`点击了边: ${edge.source} → ${edge.target}`);
   };
 
+  const getMenuTypeLabel = (nodeType: IRArchObjTy): string => {
+    switch (nodeType) {
+      case "Module":
+        return "模块";
+      case "Func":
+      case "ExternFunc":
+        return "函数";
+      case "Global":
+      case "ExternGlobal":
+        return "全局变量";
+      case "Block":
+        return "基本块";
+      case "Inst":
+      case "Phi":
+      case "Terminator":
+        return "指令";
+      default:
+        return "对象";
+    }
+  };
+
+  const handleMenuItemClick = (item: GuideMenuItem) => {
+    if (!menuState) return;
+    if (item.key === "expand-one") {
+      const node = getMockNodeByPath(mockRoot, menuState.path);
+      if (node) {
+        setExpandedMap((prev) => {
+          const next = { ...prev };
+          node.children.forEach((_, index) => {
+            const childPath = getMockChildPath(menuState.path, index);
+            next[childPath] = true;
+          });
+          return next;
+        });
+        setFocusedPath(menuState.path);
+      }
+      setMenuState(null);
+      return;
+    }
+
+    if (item.key === "expand-all") {
+      const paths = collectDescendantPaths(mockRoot, menuState.path);
+      if (paths.length > 0) {
+        setExpandedMap((prev) => {
+          const next = { ...prev };
+          paths.forEach((path) => {
+            next[path] = true;
+          });
+          return next;
+        });
+        setFocusedPath(menuState.path);
+      }
+      setMenuState(null);
+      return;
+    }
+    const typeText = getMenuTypeLabel(menuState.nodeType);
+    alert(`操作: ${item.label}\n对象: ${menuState.displayName}\n类型: ${typeText}`);
+    setMenuState(null);
+  };
+
   return (
     <React.Suspense fallback={GuideViewText}>
-      <div className="guide-view" style={{ width: "100%", height: "100%" }}>
+      <div
+        className="guide-view"
+        ref={containerRef}
+        style={{ width: "100%", height: "100%", position: "relative" }}
+        onClick={handleMenuClose}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeClick}
           onEdgeClick={handleEdgeClick}
+          onInit={setRfInstance}
           fitView
           fitViewOptions={{ padding: 0.2 }}
         >
           <Background />
           <Controls />
         </ReactFlow>
+        {menuState && (
+          <div
+            style={{
+              position: "absolute",
+              top: menuState.top,
+              left: menuState.left,
+              zIndex: 20,
+              width: "160px",
+              backgroundColor: "white",
+              border: "1px solid #e5e7eb",
+              borderRadius: "6px",
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.12)",
+              padding: "6px 0",
+              display: "flex",
+              flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseLeave={handleMenuClose}
+          >
+            {menuState.items.map((item) => (
+              <button
+                key={item.key}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  color: "#111827",
+                  cursor: "pointer",
+                }}
+                onClick={() => handleMenuItemClick(item)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </React.Suspense>
   );
