@@ -296,6 +296,63 @@ pub struct ModuleBrief {
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ModuleGlobalsBrief {
-    pub overview_src: String,
+    pub overview_src: SmolStr,
     pub globals: Box<[GlobalObjBase]>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "typeid")]
+pub enum IRPoolObjDt {
+    Func(FuncObjDt),
+    GlobalVar(GlobalVarObjDt),
+    Block(BlockDt),
+    Terminator(TerminatorDt),
+    Inst(NormalInstDt),
+    Phi(PhiInstDt),
+}
+impl From<FuncObjDt> for IRPoolObjDt {
+    fn from(value: FuncObjDt) -> Self {
+        Self::Func(value)
+    }
+}
+impl From<GlobalVarObjDt> for IRPoolObjDt {
+    fn from(value: GlobalVarObjDt) -> Self {
+        Self::GlobalVar(value)
+    }
+}
+impl From<BlockDt> for IRPoolObjDt {
+    fn from(value: BlockDt) -> Self {
+        Self::Block(value)
+    }
+}
+impl From<TerminatorDt> for IRPoolObjDt {
+    fn from(value: TerminatorDt) -> Self {
+        Self::Terminator(value)
+    }
+}
+impl From<NormalInstDt> for IRPoolObjDt {
+    fn from(value: NormalInstDt) -> Self {
+        Self::Inst(value)
+    }
+}
+impl From<PhiInstDt> for IRPoolObjDt {
+    fn from(value: PhiInstDt) -> Self {
+        Self::Phi(value)
+    }
+}
+impl From<InstDt> for IRPoolObjDt {
+    fn from(value: InstDt) -> Self {
+        match value {
+            InstDt::Normal(inst) => Self::Inst(inst),
+            InstDt::Terminator(term) => Self::Terminator(term),
+            InstDt::Phi(phi) => Self::Phi(phi),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FuncCloneInfo {
+    pub new_id: GlobalID,
+    pub bb_map: Box<[(BlockID, BlockID)]>,
+    pub inst_map: Box<[(InstID, InstID)]>,
 }

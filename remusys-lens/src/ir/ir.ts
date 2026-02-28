@@ -202,14 +202,11 @@ export type ModuleGlobalsDt = {
   overview_src: string;
   globals: GlobalObjBase[];
 };
-export function irGetModuleGlobals(module_id: string): ModuleGlobalsDt {
-  return Wasm.Api.get_module_globals(module_id);
+export function irGetModuleGlobalsBrief(module_id: string): ModuleGlobalsDt {
+  return Wasm.Api.get_globals_brief(module_id);
 }
-export function irLoadGlobalObj(
-  _module_id: string,
-  _global_id: GlobalID,
-): GlobalObjDt {
-  throw new Error("TODO");
+export function irLoadGlobalObj(module_id: string, global_id: GlobalID): GlobalObjDt {
+  return Wasm.Api.load_global_obj(module_id, global_id);
 }
 export function irLoadFuncObj(module_id: string, func_id: GlobalID): FuncObjDt {
   let obj = irLoadGlobalObj(module_id, func_id);
@@ -232,15 +229,6 @@ export type BlockDt = {
   source_loc: SourceLoc;
   insts: InstDt[];
 };
-export function irLoadBlocks(
-  _module_id: string,
-  _blocks: BlockID[],
-): BlockDt[] {
-  throw new Error("TODO");
-}
-export function irLoadBlock(_module_id: string, _block_id: BlockID): BlockDt {
-  throw new Error("TODO");
-}
 export function blockGetSuccs(block: BlockDt): JumpTargetDt[] {
   let last_inst = block.insts[block.insts.length - 1];
   if (last_inst.typeid === "Terminator") {
@@ -273,9 +261,6 @@ export type PhiInstDt = InstBase & {
   incomings: { value: ValueDt; from: BlockID }[];
 };
 export type InstDt = NormalInstDt | TerminatorDt | PhiInstDt;
-export function irLoadInst(_inst_id: InstID): InstDt {
-  throw new Error("TODO");
-}
 
 export type SourceLocUpdate = {
   id: SourceTrackable;
@@ -287,24 +272,17 @@ export type SourceUpdates = {
   ranges: SourceLocUpdate[];
   elliminated: SourceTrackable[];
 };
-export function irUpdateFuncSource(
-  _module_id: string,
-  _func: GlobalID,
-): SourceUpdates {
-  throw new Error("TODO");
+export function irUpdateFuncSource(module_id: string, func: GlobalID): SourceUpdates {
+  return Wasm.Api.update_func_src(module_id, func);
 }
-export function irUpdateModuleOverviewSource(_module_id: string): SourceUpdates {
-  throw new Error("TODO");
+export function irUpdateModuleOverviewSource(module_id: string): SourceUpdates {
+  return Wasm.Api.update_overview_src(module_id);
 }
-export function irRenameID(
-  _module_id: string,
-  _id: SourceTrackable,
-  _new_name: string,
-): SourceUpdates {
-  throw new Error("TODO");
+export function irRenameID(module_id: string, id: SourceTrackable, new_name: string) {
+  Wasm.Api.rename(module_id, id, new_name);
 }
-export function irValueGetUsedBy(_module_id: string, _val: ValueDt): UseID[] {
-  throw new Error("TODO");
+export function irValueGetUsedBy(module_id: string, val: ValueDt): UseID[] {
+  return Wasm.Api.get_value_used_by(module_id, val);
 }
 
 export type FuncCloneInfo = {
@@ -312,9 +290,6 @@ export type FuncCloneInfo = {
   bb_map: [BlockID, BlockID][];
   inst_map: [InstID, InstID][];
 };
-export function irCloneFunction(
-  _module_id: string,
-  _func_id: GlobalID,
-): FuncCloneInfo {
-  throw new Error("TODO");
+export function irCloneFunction(module_id: string, func_id: GlobalID): FuncCloneInfo {
+  return Wasm.Api.clone_function(module_id, func_id);
 }
