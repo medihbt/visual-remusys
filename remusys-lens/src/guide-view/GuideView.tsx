@@ -451,7 +451,7 @@ function makeMainFuncMock(): MockTreeNode {
           begin: { line: 3, column: 3 },
           end: { line: 3, column: 23 },
         },
-        name: null,
+        name: undefined,
         opcode: "jmp",
         operands: [],
         succs: [
@@ -508,7 +508,6 @@ function makeMainFuncMock(): MockTreeNode {
           begin: { line: 6, column: 3 },
           end: { line: 6, column: 23 },
         },
-        name: null,
         opcode: "br",
         operands: [
           {
@@ -563,7 +562,6 @@ function makeMainFuncMock(): MockTreeNode {
           begin: { line: 8, column: 3 },
           end: { line: 8, column: 22 },
         },
-        name: null,
         opcode: "call",
         operands: [
           {
@@ -586,7 +584,6 @@ function makeMainFuncMock(): MockTreeNode {
           begin: { line: 9, column: 3 },
           end: { line: 9, column: 23 },
         },
-        name: null,
         opcode: "jmp",
         operands: [],
         succs: [
@@ -620,7 +617,6 @@ function makeMainFuncMock(): MockTreeNode {
           begin: { line: 11, column: 3 },
           end: { line: 11, column: 12 },
         },
-        name: null,
         opcode: "ret",
         operands: [
           {
