@@ -7,23 +7,23 @@
 
 Visual Remusys 是 Remusys-IR SDK 外围组件的一部分，用于 Remusys-IR 内存结构可视化、优化器可视化、变换规则可视化。同时，它也是我的毕业设计，作为毕设的开发目标是实现最基础的可视化功能, 成为一个简易的教具。
 
-## 项目依赖
+## 依赖搭建
 
-- [Remusys-IR](https://github.com/medihbt/remusys-ir) 是一个使用 Rust 编写的类 LLVM 中间代码系统，目标是在 Rust 平台上实现与 LLVM 相近的中间代码结构，并提供一定的教学价值。
-- [Remusys-lang](https://gitee.com/medihbt/remusys-lang) 是 Remusys-IR 的 SysY 前端.
+Visual Remusys 使用 NodeJS + Vite + WASM 系列套件, 因此在运行前需要按顺序安装好下面的依赖:
 
-## 开发进度
+- Node.js: https://nodejs.org
+- Rust 基础开发套件: https://rust-lang.org. Visual Remusys 默认使用最新的 stable rust 环境.
+- wasm-pack: 安装好 Rust 后运行命令 `cargo install wasm-pack`
+- wasm-bindgen: wasm-pack 在运行时会自己安装好 wasm-bindgen 的 CLI 版本, 预装 wasm-bindgen 没用。这个安装过程会占据很长时间并且没有任何 debug 输出, 该问题尚未解决。
 
-### 依赖层
+## 快速运行
 
-- [x] IR 文本前端
-- [ ] Inst Transformer 开发 (可选)
+在项目目录下执行下面的命令启动项目:
 
-### 服务层
+```bash
+npm install
+npm run wasm-build && npm run wasm-refresh
+npm run dev
+```
 
-- [x] IR 传输格式开发
-- [ ] IR 快照管理
-
-### 前端 UI
-
-- [ ] 设计 UI 交互逻辑（几个面板给做一下）
+此时 vite 会启动并指引你打开一个 localhost 网址. 使用浏览器打开网址即可看到效果.
