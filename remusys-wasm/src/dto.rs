@@ -183,6 +183,7 @@ impl From<PoolAllocatedID> for SourceTrackable {
 #[derive(Debug, Clone, Serialize)]
 pub struct UseDt {
     pub id: UseID,
+    pub user: UserID,
     pub kind: UseKind,
     pub value: ValueDt,
     pub source_loc: SourceLoc,
@@ -190,6 +191,7 @@ pub struct UseDt {
 #[derive(Debug, Clone, Serialize)]
 pub struct JumpTargetDt {
     pub id: JumpTargetID,
+    pub terminator: InstID,
     pub kind: JumpTargetKind,
     pub target: BlockID,
     pub source_loc: SourceLoc,
@@ -227,6 +229,7 @@ pub struct GlobalVarObjDt {
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockDt {
     pub id: BlockID,
+    pub parent: GlobalID,
     pub name: Option<SmolStr>,
     pub source_loc: SourceLoc,
     pub insts: Box<[InstDt]>,
@@ -235,6 +238,7 @@ pub struct BlockDt {
 #[derive(Debug, Clone, Serialize)]
 pub struct InstBase {
     pub id: InstID,
+    pub parent: BlockID,
     pub name: Option<SmolStr>,
     pub opcode: Opcode,
     pub operands: Box<[UseDt]>,

@@ -11,7 +11,7 @@ lto = true
 opt-level = "s"
 
 [dependencies]
-remusys-ir = { path = "../remusys-ir", features = ["serde"] }
+remusys-ir = { path = "../remusys-ir", features = ["serde", "random-generation"] }
 remusys-lang = { path = "../remusys-lang", features = ["remusys-ir-integration"] }
 remusys-ir-parser = { path = "../remusys-ir-parser", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

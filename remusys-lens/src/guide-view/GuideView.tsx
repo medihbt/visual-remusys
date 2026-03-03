@@ -438,6 +438,7 @@ function makeMainFuncMock(): MockTreeNode {
   const entryBB: BlockDt = {
     typeid: "Block",
     id: "b:1:1",
+    parent: "g:0:1",
     name: "entry",
     source_loc: {
       begin: { line: 2, column: 1 },
@@ -447,6 +448,8 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Terminator",
         id: "i:2:1",
+        parent: "b:1:1",
+        terminator: "i:2:1",
         source_loc: {
           begin: { line: 3, column: 3 },
           end: { line: 3, column: 23 },
@@ -472,6 +475,7 @@ function makeMainFuncMock(): MockTreeNode {
   const whileCondBB: BlockDt = {
     typeid: "Block",
     id: "b:2:1",
+    parent: "g:0:1",
     name: "while.cond",
     source_loc: {
       begin: { line: 4, column: 1 },
@@ -481,6 +485,7 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Inst",
         id: "i:3:1",
+        parent: "b:2:1",
         source_loc: {
           begin: { line: 5, column: 3 },
           end: { line: 5, column: 23 },
@@ -490,6 +495,7 @@ function makeMainFuncMock(): MockTreeNode {
         operands: [
           {
             id: "u:1:1",
+            user: { Inst: "i:3:1" },
             kind: "CallArg:0",
             value: {
               Global: "g:1:1",
@@ -504,6 +510,8 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Terminator",
         id: "i:4:1",
+        parent: "b:2:1",
+        terminator: "i:4:1",
         source_loc: {
           begin: { line: 6, column: 3 },
           end: { line: 6, column: 23 },
@@ -512,6 +520,7 @@ function makeMainFuncMock(): MockTreeNode {
         operands: [
           {
             id: "u:2:1",
+            user: { Inst: "i:4:1" },
             kind: "Cond",
             value: {
               Inst: "i:3:1",
@@ -549,6 +558,7 @@ function makeMainFuncMock(): MockTreeNode {
   const whileBodyBB: BlockDt = {
     typeid: "Block",
     id: "b:3:1",
+    parent: "g:0:1",
     name: "while.body",
     source_loc: {
       begin: { line: 7, column: 1 },
@@ -558,6 +568,7 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Inst",
         id: "i:5:1",
+        parent: "b:3:1",
         source_loc: {
           begin: { line: 8, column: 3 },
           end: { line: 8, column: 22 },
@@ -566,6 +577,7 @@ function makeMainFuncMock(): MockTreeNode {
         operands: [
           {
             id: "u:3:1",
+            user: { Inst: "i:5:1" },
             kind: "CallArg:0",
             value: {
               Global: "g:2:1",
@@ -580,6 +592,8 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Terminator",
         id: "i:6:1",
+        parent: "b:3:1",
+        terminator: "i:6:1",
         source_loc: {
           begin: { line: 9, column: 3 },
           end: { line: 9, column: 23 },
@@ -604,6 +618,7 @@ function makeMainFuncMock(): MockTreeNode {
   const exitBB: BlockDt = {
     typeid: "Block",
     id: "b:4:1",
+    parent: "g:0:1",
     name: "exit",
     source_loc: {
       begin: { line: 10, column: 1 },
@@ -613,6 +628,8 @@ function makeMainFuncMock(): MockTreeNode {
       {
         typeid: "Terminator",
         id: "i:7:1",
+        parent: "b:4:1",
+        terminator: "i:7:1",
         source_loc: {
           begin: { line: 11, column: 3 },
           end: { line: 11, column: 12 },
@@ -621,6 +638,7 @@ function makeMainFuncMock(): MockTreeNode {
         operands: [
           {
             id: "u:4:1",
+            user: { Inst: "i:7:1" },
             kind: "RetVal",
             value: { I32: 0 },
             source_loc: {

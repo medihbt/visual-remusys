@@ -19,7 +19,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-reflex": "^5.0.5",
-    "remusys-wasm": "file:../remusys-wasm/pkg/remusys-wasm-0.1.0.tgz"
+    "remusys-wasm": "file:../remusys-wasm/pkg/remusys-wasm-0.1.0.tgz",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

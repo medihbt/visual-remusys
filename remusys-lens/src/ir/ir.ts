@@ -1,18 +1,77 @@
-import * as Wasm from "remusys-wasm";
+import { Api } from "remusys-wasm";
 
 /**
- * 池分配的 Indexed ID 类型, 格式: `{pool type}:{slot index}:{slot generation}`
+ * 池分配的 Indexed ID 类型, 格式: `g:{slot index}:{slot generation}`
  *
- * - `pool type`: 一个字符, 结构如下面的代码所示
+ * - `pool type` = 'g': 该 ID 用于 "全局对象内存池"
  * - `slot index`: 十六进制无符号整数
  * - `slot genetation`: 十六进制无符号整数, 取值范围 `[1, FFFF]`. 0 代是无效值, 会被拦截.
  */
 export type GlobalID = `g:${string}:${string}`;
+
+/**
+ * 池分配的 Indexed ID 类型, 格式: `b:{slot index}:{slot generation}`
+ *
+ * - `pool type` = 'b': 该 ID 用于 "基本块内存池"
+ * - `slot index`: 十六进制无符号整数
+ * - `slot genetation`: 十六进制无符号整数, 取值范围 `[1, FFFF]`. 0 代是无效值, 会被拦截.
+ */
 export type BlockID = `b:${string}:${string}`;
+
+/**
+ * 池分配的 Indexed ID 类型, 格式: `i:{slot index}:{slot generation}`
+ *
+ * - `pool type` = 'i': 该 ID 用于 "指令内存池"
+ * - `slot index`: 十六进制无符号整数
+ * - `slot genetation`: 十六进制无符号整数, 取值范围 `[1, FFFF]`. 0 代是无效值, 会被拦截.
+ */
 export type InstID = `i:${string}:${string}`;
+
+/**
+ * 池分配的 Indexed ID 类型, 格式: `e:{slot index}:{slot generation}`
+ *
+ * - `pool type` = 'e': 该 ID 用于 "表达式内存池"
+ * - `slot index`: 十六进制无符号整数
+ * - `slot genetation`: 十六进制无符号整数, 取值范围 `[1, FFFF]`. 0 代是无效值, 会被拦截.
+ */
 export type ExprID = `e:${string}:${string}`;
 export type UseID = `u:${string}:${string}`;
 export type JumpTargetID = `j:${string}:${string}`;
+
+export type ModuleID = `module-${number}`;
+
+export type PoolStrID = GlobalID | BlockID | InstID | ExprID | UseID | JumpTargetID;
+
+export class IDCast {
+  static asGlobal(id: string): id is GlobalID {
+    return /^g:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asBlock(id: string): id is BlockID {
+    return /^b:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asInst(id: string): id is InstID {
+    return /^i:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asExpr(id: string): id is ExprID {
+    return /^e:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asUse(id: string): id is UseID {
+    return /^u:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asJumpTarget(id: string): id is JumpTargetID {
+    return /^j:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
+  }
+  static asPoolStrID(id: string): id is PoolStrID {
+    return (
+      IDCast.asGlobal(id) ||
+      IDCast.asBlock(id) ||
+      IDCast.asInst(id) ||
+      IDCast.asExpr(id) ||
+      IDCast.asUse(id) ||
+      IDCast.asJumpTarget(id)
+    );
+  }
+}
 
 /** IR opcode representation */
 export type Opcode =
@@ -155,14 +214,20 @@ export type PoolAllocatedID =
 
 export type SourceTrackable = PoolAllocatedID | { FuncArg: [GlobalID, number] };
 
-export function irTypeGetName(_t: ValTypeID): string {
-  throw new Error("TODO");
+export function irTypeGetName(module_id: string, t: ValTypeID): string {
+  switch (t) {
+    case "void": case "ptr": case "float": case "double":
+    case "i1": case "i8": case "i16": case "i32": case "i64":
+      return t;
+    default:
+      return t.startsWith('i') ? t : Api.type_get_name(module_id, t);
+  }
 }
 
-export type ModuleBrief = { id: string };
+export type ModuleBrief = { id: ModuleID };
 export type SourceTy = "ir" | "sysy";
 export function irCompileModule(source_ty: SourceTy, source: string): ModuleBrief {
-  return Wasm.Api.compile_module(source_ty, source);
+  return Api.compile_module(source_ty, source);
 }
 
 export type Linkage = "External" | "DSOLocal" | "Private";
@@ -170,11 +235,8 @@ export type SourcePos = {
   line: number; // 1-based
   column: number; // 1-based, UTF-16 code unit index
 };
-export type SourceLoc = {
-  begin: SourcePos;
-  end: SourcePos;
-};
-type GlobalObjBase = {
+export type SourceLoc = { begin: SourcePos; end: SourcePos; };
+export type GlobalObjBase = {
   id: GlobalID;
   name: string;
   linkage: Linkage;
@@ -202,13 +264,22 @@ export type ModuleGlobalsDt = {
   overview_src: string;
   globals: GlobalObjBase[];
 };
-export function irGetModuleGlobalsBrief(module_id: string): ModuleGlobalsDt {
-  return Wasm.Api.get_globals_brief(module_id);
+export function irGetModuleGlobalsBrief(module_id: ModuleID): ModuleGlobalsDt {
+  return Api.get_globals_brief(module_id);
 }
-export function irLoadGlobalObj(module_id: string, global_id: GlobalID): GlobalObjDt {
-  return Wasm.Api.load_global_obj(module_id, global_id);
+export function irLoadGlobalObj(module_id: ModuleID, global_id: GlobalID): GlobalObjDt {
+  return Api.load_global_obj(module_id, global_id);
 }
-export function irLoadFuncObj(module_id: string, func_id: GlobalID): FuncObjDt {
+
+/// 如果 ID 是函数定义作用域内的东西, 就返回这个函数定义的 ID. 否则返回 undefined.
+export function irFuncScopeOfId(module_id: ModuleID, id: SourceTrackable | PoolStrID): GlobalID | undefined {
+  return Api.func_scope_of_id(module_id, id);
+}
+/// 如果 ID 是函数定义作用域内的东西, 就把这个函数定义加载上来. 否则返回 undefined.
+export function irLoadFuncOfScope(module_id: ModuleID, id: SourceTrackable | PoolStrID): GlobalObjDt | undefined {
+  return Api.load_func_of_scope(module_id, id);
+}
+export function irLoadFuncObj(module_id: ModuleID, func_id: GlobalID): FuncObjDt {
   let obj = irLoadGlobalObj(module_id, func_id);
   if (obj.typeid !== "Func") {
     throw new Error(`Global ${func_id} is not a function`);
@@ -225,6 +296,7 @@ export type JumpTargetDt = {
 export type BlockDt = {
   typeid: "Block";
   id: BlockID;
+  parent: GlobalID;
   name?: string;
   source_loc: SourceLoc;
   insts: InstDt[];
@@ -240,12 +312,14 @@ export function blockGetSuccs(block: BlockDt): JumpTargetDt[] {
 
 export type UseDt = {
   id: UseID;
+  user: UserID;
   kind: UseKind;
   value: ValueDt;
   source_loc: SourceLoc;
 };
 type InstBase = {
   id: InstID;
+  parent: BlockID;
   name?: string;
   opcode: Opcode;
   operands: UseDt[];
@@ -254,6 +328,7 @@ type InstBase = {
 export type NormalInstDt = InstBase & { typeid: "Inst" };
 export type TerminatorDt = InstBase & {
   typeid: "Terminator";
+  terminator: InstID;
   succs: JumpTargetDt[];
 };
 export type PhiInstDt = InstBase & {
@@ -272,17 +347,17 @@ export type SourceUpdates = {
   ranges: SourceLocUpdate[];
   elliminated: SourceTrackable[];
 };
-export function irUpdateFuncSource(module_id: string, func: GlobalID): SourceUpdates {
-  return Wasm.Api.update_func_src(module_id, func);
+export function irUpdateFuncSource(module_id: ModuleID, func: GlobalID): SourceUpdates {
+  return Api.update_func_src(module_id, func);
 }
-export function irUpdateModuleOverviewSource(module_id: string): SourceUpdates {
-  return Wasm.Api.update_overview_src(module_id);
+export function irUpdateModuleOverviewSource(module_id: ModuleID): SourceUpdates {
+  return Api.update_overview_src(module_id);
 }
-export function irRenameID(module_id: string, id: SourceTrackable, new_name: string) {
-  Wasm.Api.rename(module_id, id, new_name);
+export function irRenameID(module_id: ModuleID, id: SourceTrackable, new_name: string) {
+  Api.rename(module_id, id, new_name);
 }
-export function irValueGetUsedBy(module_id: string, val: ValueDt): UseID[] {
-  return Wasm.Api.get_value_used_by(module_id, val);
+export function irValueGetUsedBy(module_id: ModuleID, val: ValueDt): UseID[] {
+  return Api.get_value_used_by(module_id, val);
 }
 
 export type FuncCloneInfo = {
@@ -290,6 +365,8 @@ export type FuncCloneInfo = {
   bb_map: [BlockID, BlockID][];
   inst_map: [InstID, InstID][];
 };
-export function irCloneFunction(module_id: string, func_id: GlobalID): FuncCloneInfo {
-  return Wasm.Api.clone_function(module_id, func_id);
+export function irCloneFunction(module_id: ModuleID, func_id: GlobalID): FuncCloneInfo {
+  return Api.clone_function(module_id, func_id);
 }
+
+export type IRValueObjectDt = GlobalObjDt | BlockDt | InstDt;
