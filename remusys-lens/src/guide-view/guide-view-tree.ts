@@ -47,6 +47,24 @@ export function idStringify(id: TreeNodeRef): string {
       throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
   }
 }
+/**
+ * Convert a TreeNodeRef to an IR SourceTrackable object when possible.
+ * Returns null for module-level refs.
+ */
+export function treeRefToSourceTrackable(id: TreeNodeRef): ir.SourceTrackable | null {
+  switch (id.type) {
+    case "Module":
+      return null;
+    case "GlobalObj":
+      return { Global: id.global_id };
+    case "Block":
+      return { Block: id.block_id };
+    case "Inst":
+      return { Inst: id.inst_id };
+    default:
+      return null;
+  }
+}
 export function irIdGetKind(module: ModuleCache, id: TreeNodeRef): TreeNodeKind {
   switch (id.type) {
     case "Module":
@@ -256,6 +274,7 @@ export class TreeNodeStorage {
         break;
       }
     }
+    console.debug('TreeNodeStorage.expand: adding node', idStringify(newNode.selfId), 'kind=', newNode.kind, 'children=', newNode.childIds.length);
     this.set(newNode);
     return newNode;
   }
@@ -264,12 +283,26 @@ export class TreeNodeStorage {
     if (!node) {
       throw new Error(`Node with ID ${idStringify(id)} not found in TreeNodeStorage`);
     }
-    return node.childIds.map(childId => this.expand(childId, module));
+    console.debug('TreeNodeStorage.expandChildren:', idStringify(id), 'childCount=', node.childIds.length);
+    return node.childIds.map(childId => {
+      console.debug('TreeNodeStorage.expandChildren: expanding child', idStringify(childId));
+      return this.expand(childId, module);
+    });
   }
   dfsExpand(id: TreeNodeRef, module: ModuleCache): GuideTreeNode[] {
-    const rootNode = this.expand(id, module);
+    console.debug('TreeNodeStorage.dfsExpand: start', idStringify(id));
     const result: GuideTreeNode[] = [];
-    this.postDfs(rootNode, n => result.push(n));
+
+    const expandRec = (ref: TreeNodeRef) => {
+      const node = this.expand(ref, module);
+      result.push(node);
+      for (const childId of node.childIds) {
+        expandRec(childId);
+      }
+    };
+
+    expandRec(id);
+    console.debug('TreeNodeStorage.dfsExpand: result count', result.length);
     return result;
   }
   collapse(id: TreeNodeRef): void {
@@ -281,6 +314,13 @@ export class TreeNodeStorage {
       default:
         this.dfsRemove(id);
         break;
+    }
+  }
+  collapseChildren(id: TreeNodeRef): void {
+    const node = this.get(id);
+    if (!node) return;
+    for (const childId of node.childIds) {
+      this.collapse(childId);
     }
   }
 

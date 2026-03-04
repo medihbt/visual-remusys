@@ -93,7 +93,7 @@ pub fn source_to_full_ir(source: &str) -> Result<ModuleWithInfo, CompileErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use remusys_ir::ir::{FuncClone, FuncID, IRWriteOption, ISubGlobalID};
+    use remusys_ir::ir::{FuncClone, FuncID, IRSerializer, IRWriteOption, ISubGlobalID, SerializeIR};
     use smallvec::SmallVec;
     use std::path::PathBuf;
 
@@ -197,5 +197,36 @@ mod tests {
         clone_func(&mut module, "fibonacci", "fibonacci_rclone", true);
 
         write_ir(&module, "clone-func-out.ll");
+    }
+
+    #[test]
+    fn test_outpanic() {
+        let source: &str = r#"
+define dso_local i32 @main() {
+entry:
+    %1 = add i32 1, 2
+    ret i32 0
+}
+
+define dso_local void @swap_max(ptr %a, ptr %b) {
+entry:
+    %a.val = load i32, ptr %a, align 4
+    %b.val = load i32, ptr %b, align 4
+    %less = icmp slt i32 %a.val, %b.val
+    br i1 %less, label %swap_ab, label %exit
+swap_ab:
+    store i32 %a.val, ptr %b, align 4
+    store i32 %b.val, ptr %a, align 4
+    br label %exit
+exit:
+    ret void
+}"#;
+        let ModuleWithInfo { mut module, namemap } = source_to_full_ir(source).unwrap();
+        module.begin_gc().finish();
+        let mut ser = IRSerializer::new_buffered(&module, &namemap);
+        let main_func = module.get_global_by_name("main").unwrap();
+        ser.fmt_func_header(FuncID::raw_from(main_func)).unwrap();
+        let swap_max_func = module.get_global_by_name("swap_max").unwrap();
+        ser.fmt_func_header(FuncID::raw_from(swap_max_func)).unwrap();
     }
 }

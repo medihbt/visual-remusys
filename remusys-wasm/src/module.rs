@@ -8,7 +8,7 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-use crate::{dto::*, fmt_jserr, mapping::*};
+use crate::{console_log, dto::*, fmt_jserr, mapping::*};
 
 pub struct ModuleInfo {
     pub module: Box<Module>,
@@ -136,7 +136,7 @@ impl ModuleInfo {
     pub fn invalidate_overview(&self) {
         self.overview.take();
     }
-    pub fn overview_or_make(&self) -> IRWriteRes<Rc<OverviewInfo>> {
+    pub fn overview_or_make(&self) -> Result<Rc<OverviewInfo>, JsError> {
         let mut overview = self.overview.borrow_mut();
         match &*overview {
             Some(ov) => Ok(ov.clone()),
@@ -147,7 +147,7 @@ impl ModuleInfo {
             }
         }
     }
-    pub fn make_overview(&self) -> IRWriteRes<Rc<OverviewInfo>> {
+    pub fn make_overview(&self) -> Result<Rc<OverviewInfo>, JsError> {
         let symtab = self.module.symbols.borrow();
         let mut func_pos = Vec::with_capacity(symtab.exported().len());
         let mut ser = IRSerializer::new_buffered(&self.module, &self.names);
@@ -160,11 +160,14 @@ impl ModuleInfo {
                     ser.fmt_global(id)?;
                 }
                 GlobalObj::Func(_) => {
+                    console_log!("formatting header of function with id {id:?} for overview");
                     let range = ser.fmt_func_header(FuncID::raw_from(id))?;
                     func_pos.push((id, range));
                 }
             }
+            ser.wrap_and_indent()?;
         }
+
         let mut srcmap = ser
             .dump_srcmap()
             .expect("internal error: source map not available");
@@ -475,12 +478,7 @@ impl ModuleInfo {
             value: use_obj.operand.get().into(),
             source_loc: srcmap
                 .index_get_range(use_id)
-                .map(|r| src_lines.map_range(*r))
-                .ok_or_else(|| {
-                    JsError::new(&format!(
-                        "Source location for use with id {use_id:?} not found in source map"
-                    ))
-                })?,
+                .map(|r| src_lines.map_range(*r)),
         })
     }
     pub(crate) fn make_jt_dt(

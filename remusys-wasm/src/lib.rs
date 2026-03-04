@@ -18,6 +18,13 @@ macro_rules! fmt_jserr {
     ($($args:tt)*) => { Err(JsError::new(&format!($($args)*))) };
 }
 
+#[macro_export]
+macro_rules! console_log {
+    ($($args:tt)*) => {
+        web_sys::console::log_1(&format!($($args)*).into());
+    };
+}
+
 #[wasm_bindgen]
 pub struct Api;
 
@@ -118,7 +125,7 @@ impl Api {
     }
     pub fn update_overview_src(id: &str) -> Result<JsValue, JsError> {
         let overview =
-            module::ModuleInfo::with_module(id, |m| m.overview_or_make().map_err(JsError::from))?;
+            module::ModuleInfo::with_module(id, |m| m.overview_or_make())?;
         let src_updates = SourceUpdates {
             scope: SourceUpdateScope::Module,
             source: overview.src.clone(),

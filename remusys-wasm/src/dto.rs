@@ -186,7 +186,7 @@ pub struct UseDt {
     pub user: UserID,
     pub kind: UseKind,
     pub value: ValueDt,
-    pub source_loc: SourceLoc,
+    pub source_loc: Option<SourceLoc>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct JumpTargetDt {

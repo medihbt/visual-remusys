@@ -1,16 +1,23 @@
 // components/SimpleMenu.tsx
 import React from "react";
 import type { TreeNodeKind } from "../guide-view-tree";
+import type { NavEvent } from "../types";
+
+interface MenuItem {
+  label: string;
+  event: NavEvent;
+}
 
 interface SimpleMenuProps {
   x: number;
   y: number;
   onClose: () => void;
-  onAction: (action: string) => void;
+  onAction: (event: NavEvent) => void;
   kind: TreeNodeKind;
+  items: MenuItem[];
 }
 
-export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction }) => {
+export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction, items }) => {
   // 1. 事件处理：防止菜单点击穿透
   const handleMenuClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -58,38 +65,25 @@ export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction 
       }}
       onClick={handleMenuClick}
     >
-      {/* 菜单项 */}
-      <div
-        onClick={() => onAction('expand-all')}
-        style={{
-          padding: "10px 15px",
-          cursor: "pointer",
-          fontSize: "13px",
-          color: "#4b5563",
-          transition: "background-color 0.1s"
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f3f4f6")}
-        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff")}
-      >
-        展开全部子节点
-      </div>
-      
-      <div
-        onClick={() => onAction('focus')}
-        style={{
-          padding: "10px 15px",
-          cursor: "pointer",
-          fontSize: "13px",
-          color: "#4b5563",
-          borderTop: "1px solid #e5e7eb",
-          transition: "background-color 0.1s"
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f3f4f6")}
-        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff")}
-      >
-        聚焦此处
-      </div>
-      
+      {items.map((it, idx) => (
+        <div
+          key={idx}
+          onClick={() => { console.debug('SimpleMenu: item click', it); onAction(it.event); }}
+          style={{
+            padding: "10px 15px",
+            cursor: "pointer",
+            fontSize: "13px",
+            color: "#4b5563",
+            transition: "background-color 0.1s",
+            borderTop: idx === 0 ? "none" : "1px solid #e5e7eb"
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f3f4f6")}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff")}
+        >
+          {it.label}
+        </div>
+      ))}
+
       {/* 关闭按钮（可选） */}
       <div
         onClick={onClose}

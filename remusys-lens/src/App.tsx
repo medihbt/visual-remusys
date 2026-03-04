@@ -5,36 +5,74 @@ import LensViewer from "./editor/LensViewer";
 import FlowViewer from "./flow/FlowViewer";
 import React from "react";
 import { GuideView } from "./guide-view/GuideView";
+import FileLoader from "./FileLoader";
 import {
+  ModuleCache,
   selectIRError,
   selectIRModule,
   selectIRStatus,
   useIRStore,
+  type IRStoreStatus,
 } from "./ir/ir-state";
 import type { NavEvent } from "./guide-view/types";
+import { idStringify, treeRefToSourceTrackable } from "./guide-view/guide-view-tree";
 
-const IR_SOUCE: string = `declare i1 @cond()
-declare void @body()
-
-define i32 @main() {
-entry:
-  br label %while.cond
-while.cond:
-  %cond = call i1 @cond()
-  br i1 %cond, label %while.body, label %exit
-while.body:
-  call void @body()
-  br label %while.cond
-exit:
-  ret i32 0
+// 将导航事件的处理逻辑抽出为独立函数，避免组件内堆积业务代码
+function handleNavEvent(event: NavEvent | null, clear: () => void) {
+  if (!event) return;
+  switch (event.type) {
+    case "Focus": {
+      const { nodeRef, kind, label } = event;
+      const refDesc = idStringify(nodeRef);
+      console.debug(`GuideView: Focus event received for nodeRef=${refDesc}, kind=${kind}, label=${label}`);
+      try {
+        const mapped = treeRefToSourceTrackable(nodeRef);
+        console.debug('App.handleNavEvent: mapped treeRef ->', mapped);
+        const s = useIRStore.getState();
+        if (mapped) {
+          console.debug('App.handleNavEvent: calling focusOn with', mapped);
+          s.focusOn(mapped);
+          console.debug('App.handleNavEvent: focusOn returned');
+        } else {
+          // Module-level focus
+          console.debug('App.handleNavEvent: calling focusOn module sentinel');
+          s.focusOn({ Module: true });
+          console.debug('App.handleNavEvent: focusOn returned for module');
+        }
+      } catch (e) {
+        console.warn('GuideView: focus mapping failed', e);
+      }
+      break;
+    }
+    case "ExpandOne": case "ExpandAll": case "Collapse": {
+      const { nodeRef, kind } = event;
+      const refDesc = idStringify(nodeRef);
+      console.debug(`GuideView: ${event.type} event received for nodeRef=${refDesc}, kind=${kind}`);
+      break;
+    }
+    case "ShowCfg": {
+      const { funcDef } = event;
+      alert(`显示函数 CFG:\n函数引用: ${funcDef}`);
+      break;
+    }
+    case "ShowDominance": {
+      const { funcDef } = event;
+      alert(`显示函数支配树:\n函数引用: ${funcDef}`);
+      break;
+    }
+    case "ShowDfg": {
+      const { blockID } = event;
+      alert(`显示基本块 DFG:\n基本块引用: ${blockID}`);
+      break;
+    }
+    default:
+      console.warn("GuideView: unknown NavEvent type", event);
+      break;
+  }
+  clear();
 }
 
-; 文本框里的文本虽然不允许用户修改, 但不是一成不变的
-; 绝大多数时候 Remusys Lens 的代码框不会存放整个 IR 文本, 只会存放当前锁定对象所在函数的 IR 文本片段
-; 锁定的对象切换时, 如果前后两个对象不在同一个函数里, 则 IR 文本会被更新成新的函数的 IR 文本片段.
-; 如果前后两个对象在同一个函数里, 则 IR 文本不变, 但编辑器会聚焦到新的锁定对象所在行,
-; 以便用户看到当前锁定对象在 IR 中的位置.
-`;
+// 不再在首屏自动加载假数据，用户需上传源文件后再触发加载
 const flowReplaceText = <>
   <h3>可视化视图, 使用 React Flow</h3>
   <p>根据导航视图中锁定的对象展示不同的图</p>
@@ -56,16 +94,28 @@ const flowReplaceText = <>
   </ul>
 </>;
 
-export default function App() {
-  const compileModule = useIRStore((state) => state.compileModule);
+export class IRFocus {
+  module: ModuleCache;
+  status: IRStoreStatus;
+  irText: string;
+  setIRText: React.Dispatch<React.SetStateAction<string>>;
+
+
+  constructor() {
+    this.module = useIRStore(selectIRModule)!;
+    this.status = useIRStore(selectIRStatus);
+    const [irText, setIRText] = React.useState(this.module.brief.overview_src);
+    this.irText = irText;
+    this.setIRText = setIRText;
+  }
+}
+
+export function MainPage() {
   const moduleCache = useIRStore(selectIRModule);
   const irStatus = useIRStore(selectIRStatus);
   const irError = useIRStore(selectIRError);
   const [navEvent, setNavEvent] = React.useState<NavEvent | null>(null);
-
-  React.useEffect(() => {
-    compileModule("ir", IR_SOUCE);
-  }, [compileModule]);
+  const sourceText = useIRStore((s) => s.sourceText);
 
   return (
     <div className="app-root">
@@ -83,7 +133,7 @@ export default function App() {
             >
               <ReflexElement minSize={50} flex={70}>
                 <div className="editor-wrap" style={{ flex: 1 }}>
-                  <LensViewer irText={IR_SOUCE} />
+                  <LensViewer irText={sourceText} />
                 </div>
               </ReflexElement>
               <ReflexSplitter />
@@ -93,6 +143,8 @@ export default function App() {
                     key={moduleCache.moduleId}
                     moduleCache={moduleCache}
                     onNavigate={setNavEvent}
+                    incomingNavEvent={navEvent}
+                    onConsumeNavEvent={(ev) => handleNavEvent(ev, () => setNavEvent(null))}
                   />
                 ) : (
                   <div style={{ padding: 12, fontSize: 13, color: "#666" }}>
@@ -117,5 +169,16 @@ export default function App() {
         </ReflexElement>
       </ReflexContainer>
     </div>
+  );
+}
+
+export default function App() {
+  const compileModule = useIRStore((state) => state.compileModule);
+  const moduleCache = useIRStore(selectIRModule);
+
+  return moduleCache ? (
+    <MainPage />
+  ) : (
+    <FileLoader onLoad={(mode, text) => compileModule(mode, text)} />
   );
 }

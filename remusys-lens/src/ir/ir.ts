@@ -315,7 +315,7 @@ export type UseDt = {
   user: UserID;
   kind: UseKind;
   value: ValueDt;
-  source_loc: SourceLoc;
+  source_loc?: SourceLoc;
 };
 type InstBase = {
   id: InstID;

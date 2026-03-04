@@ -263,6 +263,9 @@ export type IRStoreState = {
   status: IRStoreStatus;
   error: string | null;
   revision: number;
+  focusedId: ir.SourceTrackable | { Module: true } | null;
+  focusInfo: FocusSourceInfo | null;
+  focusSince: number | null;
 };
 
 export type IRStoreActions = {
@@ -281,6 +284,8 @@ export type IRStoreActions = {
   getSourceLoc: (id: ir.SourceTrackable) => ir.SourceLoc | null;
   renameSymbol: (id: ir.SourceTrackable, newName: string) => ir.SourceUpdates | null;
   getActiveModuleId: () => ModuleID | null;
+  focusOn: (id: ir.SourceTrackable | { Module: true }) => void;
+  clearFocus: () => void;
 };
 
 export type IRStore = IRStoreState & IRStoreActions;
@@ -312,6 +317,9 @@ export const useIRStore = create<IRStore>()(
       status: "idle",
       error: null,
       revision: 0,
+      focusedId: null as ir.SourceTrackable | null,
+      focusInfo: null as FocusSourceInfo | null,
+      focusSince: null as number | null,
 
       clear: () => {
         set(idleState, false, "ir/clear");
@@ -334,6 +342,8 @@ export const useIRStore = create<IRStore>()(
           );
           return module.moduleId;
         } catch (error) {
+          alert(`Failed to compile module: ${normalizeError(error)}`);
+          console.error("Module compilation error:", (error instanceof Error ? error.stack : error));
           set(
             (state) => {
               state.module = null;
@@ -473,6 +483,67 @@ export const useIRStore = create<IRStore>()(
         }
       },
 
+      focusOn(id: ir.SourceTrackable | { Module: true }) {
+        try {
+          console.debug('ir-state: focusOn called with', id);
+          let info = focusSource(get() as IRStore, id);
+          console.debug('ir-state: focusSource returned', info);
+          // If focusSource couldn't compute info (e.g. partial module state), build a minimal fallback
+          if (!info) {
+            try {
+              const module = get().module;
+              let scopeId: ir.GlobalID | null = null;
+              if (module) {
+                if (!("Module" in id)) {
+                  const owning = module.getOwningFunc(id as ir.SourceTrackable);
+                  if (owning) scopeId = owning;
+                }
+              }
+              const sourceText = module ? (scopeId ? (module.globals.get(scopeId) as any)?.source ?? module.brief.overview_src : module.brief.overview_src) : "";
+              const highlightLoc = module ? (module.findSourceLoc(id as ir.SourceTrackable) ?? DEFAULT_RANGE) : DEFAULT_RANGE;
+              info = { id, scopeId, sourceText, highlightLoc };
+              console.debug('ir-state: built fallback focusInfo', info);
+            } catch (e) {
+              console.warn('ir-state: fallback focusInfo construction failed', e);
+            }
+          }
+          set(
+            (state) => {
+              state.focusedId = id;
+              state.focusInfo = info;
+              state.focusSince = Date.now();
+              state.revision += 1;
+            },
+            false,
+            "ir/focus-on",
+          );
+          console.debug('ir-state: focus state set, new focusedId=', get().focusedId);
+        } catch (error) {
+          console.warn('ir-state: focusOn error', error);
+          set(
+            (state) => {
+              state.error = normalizeError(error);
+              state.revision += 1;
+            },
+            false,
+            "ir/focus-on/error",
+          );
+        }
+      },
+
+      clearFocus() {
+        set(
+          (state) => {
+            state.focusedId = null;
+            state.focusInfo = null;
+            state.focusSince = null;
+            state.revision += 1;
+          },
+          false,
+          "ir/clear-focus",
+        );
+      },
+
       renameSymbol(id, newName) {
         throw new Error(`Renaming(${id} to ${newName}) not supported yet: waiting for WASM`)
       },
@@ -513,4 +584,103 @@ export function selectIRRevision(state: IRStore): number {
 }
 export function selectIRBrief(state: IRStore): ir.ModuleGlobalsDt | null {
   return state.module?.brief ?? null;
+}
+
+export type FocusSourceInfo = {
+  id: ir.SourceTrackable | { Module: true };
+  scopeId: ir.GlobalID | null;
+  sourceText: string;
+  highlightLoc: ir.SourceLoc;
+};
+export function focusSource(state: IRStore, id: ir.SourceTrackable | { Module: true }): FocusSourceInfo | null {
+  try {
+    console.debug('ir-state.focusSource: called with', id);
+    const module = state.module;
+    if (!module) {
+      console.debug('ir-state.focusSource: no module');
+      return null;
+    }
+    console.debug('ir-state.focusSource: moduleId=', module.moduleId);
+
+    // Determine scope: if the id belongs to a function scope, use that function's GlobalID;
+    // otherwise scopeId is null (module scope).
+    let scopeId: ir.GlobalID | null = null;
+    // Module-level focus sentinel
+    if ("Module" in id) {
+      scopeId = null;
+      console.debug('ir-state.focusSource: module-level focus');
+    } else {
+      // If id itself is a Global and it's a loaded function object, treat it as function scope.
+      if ("Global" in id) {
+        const gid = id.Global;
+        const g = module.globals.get(gid);
+        console.debug('ir-state.focusSource: Global id=', gid, 'loaded=', !!g);
+        if (g && (g as any).typeid === "Func") {
+          scopeId = gid;
+          console.debug('ir-state.focusSource: scopeId set to global func', scopeId);
+        }
+      }
+
+      // If we still don't have a scope, ask the module for the owning function (for blocks/insts/uses)
+      if (scopeId === null) {
+        const owning = module.getOwningFunc(id as ir.SourceTrackable);
+        console.debug('ir-state.focusSource: owning func=', owning);
+        if (owning) scopeId = owning;
+      }
+    }
+
+    // Determine source text to show: module overview or the function source (if available)
+    let sourceText: string = module.brief.overview_src;
+    if (scopeId !== null) {
+      const f = module.globals.get(scopeId) as ir.FuncObjDt | undefined;
+      if (f && f.typeid === "Func" && typeof f.source === "string") {
+        sourceText = f.source;
+      }
+    }
+    console.debug('ir-state.focusSource: chosen sourceText length=', sourceText?.length ?? 0, 'scopeId=', scopeId);
+
+    // Determine highlight location. Prefer precise item source_loc; for focusing a function
+    // itself, aggregate its blocks' ranges if possible.
+    let highlightLoc: ir.SourceLoc | null = null;
+
+    // If focusing a Global function and we have loaded func blocks, compute bounding range
+    if (("Global" in id) && scopeId !== null && (id.Global === scopeId)) {
+      const f = module.globals.get(scopeId) as ir.FuncObjDt | undefined;
+      if (f && f.typeid === "Func" && f.blocks && f.blocks.length > 0) {
+        let begin = { line: Number.MAX_SAFE_INTEGER, column: Number.MAX_SAFE_INTEGER };
+        let end = { line: 0, column: 0 };
+        for (const bb of f.blocks) {
+          const loc = bb.source_loc;
+          if (!loc) continue;
+          if (loc.begin.line < begin.line || (loc.begin.line === begin.line && loc.begin.column < begin.column))
+            begin = { ...loc.begin };
+          if (loc.end.line > end.line || (loc.end.line === end.line && loc.end.column > end.column))
+            end = { ...loc.end };
+        }
+        if (begin.line !== Number.MAX_SAFE_INTEGER) {
+          highlightLoc = { begin, end };
+          console.debug('ir-state.focusSource: function bounding highlightLoc=', highlightLoc);
+        }
+      }
+    }
+
+    // Fallback to item's recorded source location
+    if (!highlightLoc) {
+      const loc = module.findSourceLoc(id as ir.SourceTrackable);
+      highlightLoc = loc ?? DEFAULT_RANGE;
+      console.debug('ir-state.focusSource: fallback highlightLoc=', highlightLoc);
+    }
+
+    const res: FocusSourceInfo = {
+      id,
+      scopeId,
+      sourceText,
+      highlightLoc,
+    };
+    console.debug('ir-state.focusSource: returning', res);
+    return res;
+  } catch (e) {
+    console.warn('ir-state.focusSource: error', e);
+    return null;
+  }
 }
