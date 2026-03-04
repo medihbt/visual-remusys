@@ -3,7 +3,10 @@ use crate::{
     irgen::{IRGen, IRGenErr},
     parser::{IRParseErr, IRParser},
 };
-use remusys_ir::{ir::Module, typing::ArchInfo};
+use remusys_ir::{
+    ir::{IRNameMap, Module},
+    typing::ArchInfo,
+};
 
 pub mod ast;
 pub mod irgen;
@@ -70,6 +73,21 @@ pub fn source_to_ir(source: &str) -> Result<Module, CompileErr> {
     irgen.generate()?;
     module.begin_gc().finish();
     Ok(module)
+}
+
+pub struct ModuleWithInfo {
+    pub module: Module,
+    pub namemap: IRNameMap,
+}
+pub fn source_to_full_ir(source: &str) -> Result<ModuleWithInfo, CompileErr> {
+    let mut parser = IRParser::new(source);
+    let ast = ModuleAst::parse(&mut parser)?;
+    let mut module = Module::new(ArchInfo::new_host(), "");
+    let mut irgen = IRGen::new(source, &ast, &module);
+    irgen.generate()?;
+    let IRGen { namemap, .. } = irgen;
+    module.begin_gc().finish();
+    Ok(ModuleWithInfo { module, namemap })
 }
 
 #[cfg(test)]

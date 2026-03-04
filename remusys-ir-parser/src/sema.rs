@@ -374,8 +374,8 @@ mod value_mapping {
 
     #[derive(Debug, Default)]
     pub struct SymbolMap {
-        globals: HashMap<SmolStr, GlobalID>,
-        locals: HashMap<SmolStr, ValueSSA>,
+        pub globals: HashMap<SmolStr, GlobalID>,
+        pub locals: HashMap<SmolStr, ValueSSA>,
     }
     impl SymbolMap {
         pub fn new() -> Self {
@@ -406,8 +406,8 @@ mod value_mapping {
             }
         }
 
-        pub fn reset_locals(&mut self) {
-            self.locals.clear();
+        pub fn reset_locals(&mut self) -> HashMap<SmolStr, ValueSSA> {
+            std::mem::take(&mut self.locals)
         }
     }
 

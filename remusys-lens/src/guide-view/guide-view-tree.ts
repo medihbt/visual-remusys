@@ -26,13 +26,70 @@ export function irObjectGetKind(obj: ir.IRValueObjectDt | null | undefined): Tre
       return obj.typeid;
   }
 }
-
 export type TreeNodeRef =
   | { type: "Module" }
   | { type: "GlobalObj"; global_id: ir.GlobalID }
   | { type: "Block"; block_id: ir.BlockID }
   | { type: "Inst"; inst_id: ir.InstID }
   ;
+
+export function idStringify(id: TreeNodeRef): string {
+  switch (id.type) {
+    case "Module":
+      return "Module";
+    case "GlobalObj":
+      return id.global_id;
+    case "Block":
+      return id.block_id;
+    case "Inst":
+      return id.inst_id;
+    default:
+      throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
+  }
+}
+export function irIdGetKind(module: ModuleCache, id: TreeNodeRef): TreeNodeKind {
+  switch (id.type) {
+    case "Module":
+      return "Module";
+    case "GlobalObj": {
+      const gobj = module.loadGlobal(id.global_id);
+      switch (gobj.typeid) {
+        case "GlobalVar":
+          return gobj.linkage == "External" ? "ExternGlobalVar" : "GlobalVar";
+        case "Func":
+          return gobj.blocks ? "Func" : "ExternFunc";
+      }
+    }
+    case "Block": return "Block";
+    case "Inst": {
+      const inst = module.loadInst(id.inst_id);
+      return inst.typeid;
+    }
+    default:
+      throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
+  }
+}
+export function getNodeIdLabel(module: ModuleCache, id: TreeNodeRef): string {
+  switch (id.type) {
+    case "Module":
+      return module.moduleId;
+    case "GlobalObj": {
+      const gobj = module.loadGlobal(id.global_id);
+      return gobj.name;
+    }
+    case "Block": {
+      const block = module.loadBlock(id.block_id);
+      return block.name || `Block ${id.block_id}`;
+    }
+    case "Inst": {
+      const inst = module.loadInst(id.inst_id);
+      return inst.name || `${inst.opcode} ${id.inst_id}`;
+    }
+    default:
+      throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
+  }
+}
+
 
 /**
  * 单个树节点的归一化数据。
@@ -193,7 +250,7 @@ export class TreeNodeStorage {
           kind: inst.typeid,
           parentId: { type: "Block", block_id: inst.parent },
           childIds: [], // instructions don't have children in the tree structure
-          label: `${inst.opcode} ${id.inst_id}`,
+          label: inst.name || `${inst.opcode} ${id.inst_id}`,
           sourceLoc: inst.source_loc,
         };
         break;
@@ -205,7 +262,7 @@ export class TreeNodeStorage {
   expandChildren(id: TreeNodeRef, module: ModuleCache): GuideTreeNode[] {
     const node = this.get(id);
     if (!node) {
-      throw new Error(`Node with ID ${JSON.stringify(id)} not found in TreeNodeStorage`);
+      throw new Error(`Node with ID ${idStringify(id)} not found in TreeNodeStorage`);
     }
     return node.childIds.map(childId => this.expand(childId, module));
   }
@@ -252,4 +309,93 @@ export class TreeNodeStorage {
         return this.nodesById.get(id.inst_id) || null;
     }
   }
+
+  export(module: ModuleCache): Exported.NodesAndEdges {
+    const nodes: Exported.NodeData[] = [];
+    const edges: Exported.EdgeData[] = [];
+    if (!this.globalNode) {
+      throw new Error("Cannot export TreeNodeStorage without global node");
+    }
+
+    function dfs(storj: TreeNodeStorage, node: GuideTreeNode): Exported.ExpandedNode {
+      let children: Exported.NodeData[] = [];
+      for (const childId of node.childIds) {
+        const childNode = storj.get(childId);
+        if (childNode) {
+          let childExpanded = dfs(storj, childNode);
+          children.push(childExpanded);
+        } else {
+          let unexpanded: Exported.NodeData = {
+            expanded: false,
+            label: getNodeIdLabel(module, childId),
+            kind: irIdGetKind(module, childId),
+            treeNode: childId,
+          };
+          children.push(unexpanded);
+        }
+      }
+      let exportNode: Exported.ExpandedNode = {
+        expanded: true,
+        label: node.label,
+        kind: node.kind,
+        treeNode: node,
+        children: children,
+      };
+      nodes.push(exportNode);
+      for (const child of children) {
+        if (!child.expanded)
+          continue;
+        edges.push({
+          id: `${idStringify(node.selfId)}->${idStringify(child.treeNode.selfId)}`,
+          source: exportNode,
+          target: child,
+        });
+      }
+      return exportNode;
+    }
+
+    dfs(this, this.globalNode);
+
+    // remove all unexpanded nodes from nodesById, since they are not included in the export
+    let newMap: Map<ir.PoolStrID, GuideTreeNode> = new Map();
+    nodes.forEach(n => {
+      if (!n.expanded)
+        return;
+      newMap.set(idStringify(n.treeNode.selfId) as ir.PoolStrID, n.treeNode);
+    })
+    this.nodesById = newMap;
+    return {
+      moduleId: this.moduleId,
+      nodes,
+      edges,
+    };
+  }
+}
+
+export namespace Exported {
+  export type ExpandedNode = {
+    expanded: true;
+    label: string;
+    kind: TreeNodeKind;
+    treeNode: GuideTreeNode;
+    children: NodeData[];
+  };
+  export type CollapsedNode = {
+    expanded: false;
+    label: string;
+    kind: TreeNodeKind;
+    treeNode: TreeNodeRef;
+  };
+  export type NodeData = ExpandedNode | CollapsedNode;
+
+  export type EdgeData = {
+    id: string;
+    source: ExpandedNode;
+    target: ExpandedNode;
+  };
+  export type NodesAndEdges = {
+    moduleId: ir.ModuleID;
+    nodes: NodeData[];
+    edges: EdgeData[];
+  };
 }

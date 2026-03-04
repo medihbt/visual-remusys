@@ -1,5 +1,6 @@
 use remusys_ir::ir::{inst::*, *};
-use smol_str::SmolStr;
+use remusys_ir_parser::ModuleWithInfo;
+use smol_str::{SmolStr, format_smolstr};
 use std::collections::HashMap;
 use std::{
     cell::{Cell, RefCell},
@@ -83,9 +84,13 @@ impl ModuleInfo {
         Ok(Self::new(module))
     }
     pub fn compile_from_ir(source: &str) -> Result<Self, JsError> {
-        let module = remusys_ir_parser::source_to_ir(source)
+        let ModuleWithInfo { module, namemap } = remusys_ir_parser::source_to_full_ir(source)
             .map_err(|e| JsError::new(&format!("Failed to compile IR source: {e}")))?;
-        Ok(Self::new(module))
+        Ok(Self {
+            module: Box::new(module),
+            names: namemap,
+            overview: RefCell::new(None),
+        })
     }
 
     pub fn with_module<R>(
@@ -96,10 +101,7 @@ impl ModuleInfo {
         match res {
             Some(Ok(r)) => Ok(r),
             Some(Err(e)) => Err(e),
-            None => Err(JsError::new(&format!(
-                "Module with id '{}' not found",
-                name
-            ))),
+            None => fmt_jserr!("Module with id '{name}' not found"),
         }
     }
     pub fn with_module_mut<R>(
@@ -216,6 +218,10 @@ impl ModuleInfo {
     }
 
     pub fn make_global_obj(&self, id: GlobalID) -> Result<IRPoolObjDt, JsError> {
+        let allocs = &self.module.allocs;
+        if !id.is_alive(allocs) {
+            return fmt_jserr!("Global with id {id:?} does not exist or has been deleted");
+        }
         let obj = id.deref_ir(&self.module.allocs);
         let base = self.make_global_base(id, obj.clone_name())?;
         match obj {
@@ -311,13 +317,24 @@ impl ModuleInfo {
         base: GlobalObjBase,
     ) -> Result<FuncObjDt, JsError> {
         let func_id = FuncID::raw_from(base.id);
+        let Some(body) = &func.body else {
+            return Ok(FuncObjDt {
+                base,
+                args: Box::new([]),
+                ret_ty: func.ret_type,
+                source: SmolStr::new(""),
+                blocks: None,
+            });
+        };
+
         let mut args = Vec::with_capacity(func.args.len());
-        let mut func_ser = FuncSerializer::new_buffered(&self.module, func_id, &self.names);
+        let mut func_ser = FuncSerializer::try_new_buffered(&self.module, func_id, &self.names)?;
         func_ser.enable_srcmap().fmt_func(func_id)?;
 
-        let srcmap = func_ser
-            .dump_srcmap()
-            .expect("internal error: `enable_srcmap` was called but source map not available");
+        let Some(srcmap) = func_ser.dump_srcmap() else {
+            let name = func.clone_name();
+            return fmt_jserr!("internal error: source map of function @{name} not available");
+        };
         let name_map = func_ser.get_numbers();
         let func_src = func_ser.extract_string();
         let src_lines = StrLines::from(func_src.as_str());
@@ -325,31 +342,27 @@ impl ModuleInfo {
 
         for arg in &func.args {
             let arg_id = FuncArgID(func_id, arg.index);
+            let source_loc = srcmap
+                .funcarg_get_range(arg_id)
+                .map(|r| src_lines.map_range(r));
             args.push(FuncArgDt {
-                name: name_map.get_local_name(arg_id).unwrap(),
+                name: name_map.get_local_name(arg_id).unwrap_or_else(|| {
+                    format_smolstr!("%unnamed_arg({} of @{})", arg.index, func.clone_name())
+                }),
                 ty: arg.ty,
-                source_loc: srcmap
-                    .funcarg_get_range(arg_id)
-                    .map(|r| src_lines.map_range(r))
-                    .unwrap(),
+                source_loc,
             });
         }
-        let blocks = if let Some(blocks) = func.get_blocks() {
-            let mut block_dts = Vec::with_capacity(blocks.len());
-            for (bb_id, bb) in blocks.iter(&allocs.blocks) {
-                block_dts.push(self.make_block_obj(bb_id, bb, &srcmap, &name_map, &src_lines)?);
-            }
-            Some(block_dts.into_boxed_slice())
-        } else {
-            None
-        };
-
+        let mut blocks = Vec::with_capacity(body.blocks.len());
+        for (bb_id, bb) in body.blocks.iter(&allocs.blocks) {
+            blocks.push(self.make_block_obj(bb_id, bb, &srcmap, &name_map, &src_lines)?);
+        }
         Ok(FuncObjDt {
             base,
             args: args.into_boxed_slice(),
             ret_ty: func.ret_type,
             source: SmolStr::new(func_src.as_str()),
-            blocks,
+            blocks: Some(blocks.into_boxed_slice()),
         })
     }
 

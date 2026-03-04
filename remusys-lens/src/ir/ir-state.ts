@@ -84,6 +84,10 @@ export class ModuleCache {
   loadGlobal(id: ir.GlobalID): ir.GlobalObjDt {
     let dt = this.globals.get(id);
     if (!dt) {
+      let brief = this.brief.globals.find(g => g.id === id);
+      if (!brief) {
+        throw new Error(`Global with ID ${id} not found in module brief`);
+      }
       dt = ir.irLoadGlobalObj(this.moduleId, id);
       this._registerGlobal(dt);
     }

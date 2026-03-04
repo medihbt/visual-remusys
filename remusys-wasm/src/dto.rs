@@ -200,7 +200,7 @@ pub struct JumpTargetDt {
 pub struct FuncArgDt {
     pub name: SmolStr,
     pub ty: ValTypeID,
-    pub source_loc: SourceLoc,
+    pub source_loc: Option<SourceLoc>,
 }
 
 #[derive(Debug, Clone, Serialize)]

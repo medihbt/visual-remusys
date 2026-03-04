@@ -4,9 +4,19 @@ import "react-reflex/styles.css";
 import LensViewer from "./editor/LensViewer";
 import FlowViewer from "./flow/FlowViewer";
 import React from "react";
-import GuideView from "./guide-view/GuideView";
+import { GuideView } from "./guide-view/GuideView";
+import {
+  selectIRError,
+  selectIRModule,
+  selectIRStatus,
+  useIRStore,
+} from "./ir/ir-state";
+import type { NavEvent } from "./guide-view/types";
 
-const IR_SOUCE: string = `define i32 @main() {
+const IR_SOUCE: string = `declare i1 @cond()
+declare void @body()
+
+define i32 @main() {
 entry:
   br label %while.cond
 while.cond:
@@ -25,30 +35,38 @@ exit:
 ; 如果前后两个对象在同一个函数里, 则 IR 文本不变, 但编辑器会聚焦到新的锁定对象所在行,
 ; 以便用户看到当前锁定对象在 IR 中的位置.
 `;
+const flowReplaceText = <>
+  <h3>可视化视图, 使用 React Flow</h3>
+  <p>根据导航视图中锁定的对象展示不同的图</p>
+  <ul>
+    <li>模块全局: 函数调用图</li>
+    <li>函数: CFG / 支配树</li>
+    <li>基本块: DFG</li>
+    <li>指令: 数据流依赖图</li>
+  </ul>
+  <p>选择的框架</p>
+  <ul>
+    <li>
+      <a href="https://reactflow.dev">React Flow</a>: 这玩意搞树状结构或者
+      DAG 很好，但处理带环图非常糟糕，前向边和回边会交叉在一起打架
+    </li>
+    <li>
+      <a href="">Cytoscape</a>: 没用过，不知道怎么个事儿
+    </li>
+  </ul>
+</>;
 
 export default function App() {
-  const flowReplaceText = (
-    <>
-      <h3>可视化视图, 使用 React Flow</h3>
-      <p>根据导航视图中锁定的对象展示不同的图</p>
-      <ul>
-        <li>模块全局: 函数调用图</li>
-        <li>函数: CFG / 支配树</li>
-        <li>基本块: DFG</li>
-        <li>指令: 数据流依赖图</li>
-      </ul>
-      <p>选择的框架</p>
-      <ul>
-        <li>
-          <a href="https://reactflow.dev">React Flow</a>: 这玩意搞树状结构或者
-          DAG 很好，但处理带环图非常糟糕，前向边和回边会交叉在一起打架
-        </li>
-        <li>
-          <a href="">Cytoscape</a>: 没用过，不知道怎么个事儿
-        </li>
-      </ul>
-    </>
-  );
+  const compileModule = useIRStore((state) => state.compileModule);
+  const moduleCache = useIRStore(selectIRModule);
+  const irStatus = useIRStore(selectIRStatus);
+  const irError = useIRStore(selectIRError);
+  const [navEvent, setNavEvent] = React.useState<NavEvent | null>(null);
+
+  React.useEffect(() => {
+    compileModule("ir", IR_SOUCE);
+  }, [compileModule]);
+
   return (
     <div className="app-root">
       {/* 左右分栏：左侧编辑器，右侧流程图 */}
@@ -70,7 +88,21 @@ export default function App() {
               </ReflexElement>
               <ReflexSplitter />
               <ReflexElement minSize={50} flex={30}>
-                <GuideView />
+                {moduleCache ? (
+                  <GuideView
+                    key={moduleCache.moduleId}
+                    moduleCache={moduleCache}
+                    onNavigate={setNavEvent}
+                  />
+                ) : (
+                  <div style={{ padding: 12, fontSize: 13, color: "#666" }}>
+                    {irStatus === "error"
+                      ? `GuideView init failed: ${irError ?? "unknown error"}`
+                      : navEvent
+                        ? "Loading module..."
+                        : "Preparing GuideView..."}
+                  </div>
+                )}
               </ReflexElement>
             </ReflexContainer>
           </div>

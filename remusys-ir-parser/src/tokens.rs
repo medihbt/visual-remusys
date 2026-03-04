@@ -31,13 +31,13 @@ enum PrimToken<'lex> {
     #[regex(r"[+-]?0[xX][0-9A-Fa-f]+(\.)?[pP][+-]?[0-9]+")]
     LitFPHex1(&'lex str),
 
-    #[regex(r"%[a-z0-9A-Z_]+", |lex| &lex.slice()[1..])]
+    #[regex(r"%[a-z0-9A-Z_]+(\.[a-z0-9A-Z_]+)*", |lex| &lex.slice()[1..])]
     PIdent(&'lex str),
 
-    #[regex(r"@[a-z0-9A-Z_]+", |lex| &lex.slice()[1..])]
+    #[regex(r"@[a-z0-9A-Z_]+(\.[a-z0-9A-Z_]+)*", |lex| &lex.slice()[1..])]
     AIdent(&'lex str),
 
-    #[regex(r"[a-zA-Z_][a-z0-9A-Z_]*")]
+    #[regex(r"[a-zA-Z_][a-z0-9A-Z_]*(\.[a-z0-9A-Z_]+)*")]
     Word(&'lex str),
 
     #[regex(r":")]

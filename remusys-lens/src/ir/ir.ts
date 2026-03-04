@@ -246,7 +246,7 @@ export type GlobalObjBase = {
 export type FuncArgDt = {
   name: string;
   ty: ValTypeID;
-  source_loc: SourceLoc;
+  source_loc?: SourceLoc;
 };
 export type FuncObjDt = GlobalObjBase & {
   typeid: "Func";

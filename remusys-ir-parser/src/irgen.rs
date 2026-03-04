@@ -220,6 +220,7 @@ pub struct IRGen<'a> {
     types: TypeMap,
     values: ValuePool,
     pub mapping: IRSourceMapping,
+    pub namemap: IRNameMap,
 }
 
 impl<'a> IRGen<'a> {
@@ -229,6 +230,7 @@ impl<'a> IRGen<'a> {
             ast,
             ir,
             symbols: SymbolMap::default(),
+            namemap: IRNameMap::default(),
             types: TypeMap::default(),
             values: ValuePool::default(),
             mapping: IRSourceMapping::default(),
@@ -359,9 +361,8 @@ impl<'a> IRGen<'a> {
         let mut funcs: FuncList<'a> = FuncList::with_capacity(self.ast.funcs.len());
         self.setup_global_frame(&mut funcs)?;
 
+        self.symbols.reset_locals();
         for (func_ast, func_ir) in funcs {
-            self.symbols.reset_locals();
-
             // 先把函数参数塞进符号表
             for (index, arg) in func_ast.header.args.iter().enumerate() {
                 let arg_value = ValueSSA::FuncArg(func_ir, index as u32);
@@ -371,6 +372,20 @@ impl<'a> IRGen<'a> {
                     .map_err(|_| IRGenErr::symbol_undef(arg.get_span(), name))?;
             }
             self.generate_func(func_ast, func_ir)?;
+
+            for (name, value) in self.symbols.reset_locals() {
+                match value {
+                    ValueSSA::FuncArg(func_id, idx) => {
+                        assert_eq!(func_id, func_ir);
+                        self.namemap
+                            .func_args_or_insert(func_id, func_ast.header.args.len())
+                            [idx as usize] = Some(name);
+                    }
+                    ValueSSA::Block(block_id) => self.namemap.insert_block(block_id, name),
+                    ValueSSA::Inst(inst_id) => self.namemap.insert_inst(inst_id, name),
+                    _ => continue,
+                }
+            }
         }
         Ok(())
     }
@@ -494,7 +509,12 @@ impl<'a> IRGen<'a> {
 
     fn generate_func(&mut self, func_ast: &'a FuncAst, func_ir: FuncID) -> IRGenRes {
         let mut func_gen = FuncGen::new(self, func_ast, func_ir);
-        func_gen.generate()
+        func_gen.generate()?;
+        let blocks = func_gen.bb_map;
+        for (name, block) in blocks {
+            self.namemap.insert_block(block, name);
+        }
+        Ok(())
     }
 }
 

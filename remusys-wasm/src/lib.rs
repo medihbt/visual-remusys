@@ -3,6 +3,7 @@ use remusys_ir::{
     typing::{FixVecType, IValType, ScalarType, TypeFormatter, ValTypeID},
 };
 use smol_str::{SmolStr, format_smolstr};
+use serde::Serialize;
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
@@ -31,7 +32,7 @@ impl Api {
             ))),
         }?;
         let id_smol = ModuleInfo::insert_module(module_info)?.id;
-        serde_wasm_bindgen::to_value(&ModuleBrief { id: id_smol })
+        serialize_to_js(&ModuleBrief { id: id_smol })
             .map_err(|e| JsError::new(&format!("Failed to serialize module brief: {e}")))
     }
 
@@ -68,14 +69,14 @@ impl Api {
 
     pub fn get_globals_brief(id: &str) -> Result<JsValue, JsError> {
         let brief = module::ModuleInfo::with_module_mut(id, |m| m.get_globals())?;
-        serde_wasm_bindgen::to_value(&brief)
+        serialize_to_js(&brief)
             .map_err(|e| JsError::new(&format!("Failed to serialize module globals: {e}")))
     }
 
     pub fn load_global_obj(id: &str, global_id: &str) -> Result<JsValue, JsError> {
         let global_id = GlobalID::from_str(global_id).map_err(|s| JsError::new(&s))?;
         let obj = module::ModuleInfo::with_module(id, |m| m.make_global_obj(global_id))?;
-        serde_wasm_bindgen::to_value(&obj)
+        serialize_to_js(&obj)
             .map_err(|e| JsError::new(&format!("Failed to serialize global object: {e}")))
     }
     pub fn load_func_of_scope(module_id: &str, value_id: JsValue) -> Result<JsValue, JsError> {
@@ -92,13 +93,13 @@ impl Api {
             };
             info.make_global_obj(func_id).map(Some)
         })?;
-        serde_wasm_bindgen::to_value(&obj).map_err(JsError::from)
+        serialize_to_js(&obj).map_err(JsError::from)
     }
     pub fn func_scope_of_id(module_id: &str, value_id: JsValue) -> Result<JsValue, JsError> {
         let pool_id: SourceTrackable = serde_wasm_bindgen::from_value(value_id)?;
         let id =
             module::ModuleInfo::with_module(module_id, |info| info.try_get_func_scope(pool_id))?;
-        serde_wasm_bindgen::to_value(&id).map_err(JsError::from)
+        serialize_to_js(&id).map_err(JsError::from)
     }
 
     pub fn rename(id: &str, poolid: JsValue, new_name: &str) -> Result<(), JsError> {
@@ -113,7 +114,7 @@ impl Api {
     pub fn update_func_src(id: &str, func_id: &str) -> Result<JsValue, JsError> {
         let func_id = GlobalID::from_str(func_id).map_err(|s| JsError::new(&s))?;
         let func_src = module::ModuleInfo::with_module(id, |info| info.update_func_src(func_id))?;
-        serde_wasm_bindgen::to_value(&func_src).map_err(JsError::from)
+        serialize_to_js(&func_src).map_err(JsError::from)
     }
     pub fn update_overview_src(id: &str) -> Result<JsValue, JsError> {
         let overview =
@@ -133,7 +134,7 @@ impl Api {
             },
             elliminated: Box::new([]),
         };
-        serde_wasm_bindgen::to_value(&src_updates).map_err(JsError::from)
+        serialize_to_js(&src_updates).map_err(JsError::from)
     }
 
     pub fn get_value_used_by(id: &str, val: JsValue) -> Result<JsValue, JsError> {
@@ -151,7 +152,7 @@ impl Api {
                     used_by.push(uid);
                 }
             }
-            serde_wasm_bindgen::to_value(&used_by).map_err(JsError::from)
+            serialize_to_js(&used_by).map_err(JsError::from)
         })
     }
 
@@ -176,7 +177,14 @@ impl Api {
                 inst_map: cloned.insts.iter().map(|(old, new)| (*old, *new)).collect(),
             };
 
-            serde_wasm_bindgen::to_value(&res).map_err(JsError::from)
+            serialize_to_js(&res).map_err(JsError::from)
         })
     }
+}
+
+fn serialize_to_js<T: ?Sized + Serialize>(v: &T) -> Result<JsValue, serde_wasm_bindgen::Error> {
+    let mut ser = serde_wasm_bindgen::Serializer::new();
+    // 将 map-like 类型序列化为 plain object（而不是 JS Map）
+    ser = ser.serialize_maps_as_objects(true);
+    v.serialize(&ser)
 }
