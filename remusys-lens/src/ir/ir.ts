@@ -370,3 +370,11 @@ export function irCloneFunction(module_id: ModuleID, func_id: GlobalID): FuncClo
 }
 
 export type IRValueObjectDt = GlobalObjDt | BlockDt | InstDt;
+
+export type DomTreeDt = {
+  nodes: BlockID[],
+  edges: [BlockID, BlockID][]
+};
+export function makeDominatorTree(module_id: ModuleID, func_id: GlobalID): DomTreeDt {
+  return Api.make_dominator_tree(module_id, func_id);
+}

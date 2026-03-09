@@ -7,6 +7,11 @@ body,
     box-sizing: border-box;
 }
 
+
+/* Ensure root fills viewport so percentage heights inside React app work */
+html, body, #root {
+    height: 100%;
+}
 .logo {
     height: 6em;
     padding: 1.5em;

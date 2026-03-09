@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { ReactFlow, Background, Controls, useNodesState, useEdgesState } from "@xyflow/react";
+import { ReactFlow, Background, Controls, useNodesState, useEdgesState, ReactFlowProvider } from "@xyflow/react";
 import * as dagre from "dagre";
 import { GuideNodeComp } from "./components/GuideNodeComp";
 import { TreeNodeStorage, type TreeNodeKind, type TreeNodeRef } from "./guide-view-tree";
@@ -253,16 +253,17 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
 
   return (
     <div style={{ width: "100%", height: "100%", background: "#fff" }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={guideNodeTypes}
-        panOnDrag={true}
-        zoomOnScroll={true}
-      >
-        <Background gap={20} size={1} />
-        <Controls />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={guideNodeTypes}
+          fitView
+        >
+          <Background id="GuideView" />
+          <Controls />
+        </ReactFlow>
+      </ReactFlowProvider>
 
       {menuState && (
         <SimpleMenu

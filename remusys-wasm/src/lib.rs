@@ -2,13 +2,14 @@ use remusys_ir::{
     ir::*,
     typing::{FixVecType, IValType, ScalarType, TypeFormatter, ValTypeID},
 };
-use smol_str::{SmolStr, format_smolstr};
 use serde::Serialize;
+use smol_str::{SmolStr, format_smolstr};
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 
 pub use crate::{dto::*, module::*};
 
+mod cfg;
 mod dto;
 mod mapping;
 mod module;
@@ -124,8 +125,7 @@ impl Api {
         serialize_to_js(&func_src).map_err(JsError::from)
     }
     pub fn update_overview_src(id: &str) -> Result<JsValue, JsError> {
-        let overview =
-            module::ModuleInfo::with_module(id, |m| m.overview_or_make())?;
+        let overview = module::ModuleInfo::with_module(id, |m| m.overview_or_make())?;
         let src_updates = SourceUpdates {
             scope: SourceUpdateScope::Module,
             source: overview.src.clone(),
@@ -186,6 +186,12 @@ impl Api {
 
             serialize_to_js(&res).map_err(JsError::from)
         })
+    }
+
+    pub fn make_dominator_tree(module_id: &str, func_id: &str) -> Result<JsValue, JsError> {
+        let func_id = GlobalID::from_str(func_id).map_err(|s| JsError::new(&s))?;
+        let dt = ModuleInfo::with_module(module_id, |m| m.make_dominator_tree(func_id))?;
+        serialize_to_js(&dt).map_err(JsError::from)
     }
 }
 

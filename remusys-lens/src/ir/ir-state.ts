@@ -252,6 +252,14 @@ export class ModuleCache {
       default: return false;
     }
   }
+
+  getBlockSuccessors(block: ir.BlockDt): ir.JumpTargetDt[] {
+    const insts = block.insts;
+    const last = insts[insts.length - 1];
+    if (last.typeid !== "Terminator")
+      return [];
+    return last.succs;
+  }
 }
 
 export type IRStoreStatus = "idle" | "ready" | "error";

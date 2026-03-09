@@ -1,81 +1,129 @@
-import * as ReactFlow from "@xyflow/react";
+import { Background, Controls, ReactFlow } from "@xyflow/react";
+import { ReactFlowProvider } from "@xyflow/react";
 import '@xyflow/react/dist/style.css'
-import React from "react";
-import { layoutCfgDot, CFG_DOT_TEXT, extractLayoutsFromGraphviz } from './layout'
+import React, { useCallback, useEffect } from "react";
+import { ModuleCache, useIRStore, type FocusSourceInfo } from "../ir/ir-state";
+import type { BlockID, GlobalID } from "../ir/ir";
+import { FlowEdgeTypes, type FlowEdge } from "./components/Edge";
+import { FlowNodeTypes, type FlowNode } from "./components/Node";
+import { renderCfgOfFunc } from "./cfg";
+import { renderDominanceOfFunc } from "./dominance";
 
-export type FlowEdgeProps = ReactFlow.Edge<any> & {
-    data: {
-        mainPaths: string[]
-        arrowPaths: string[]
-    }
+const fallBackNodes: FlowNode[] = [{
+  id: 'module:empty',
+  position: { x: 0, y: 0 },
+  type: 'flowNode',
+  data: {
+    label: 'No function selected',
+    bgColor: '#fef3c7',
+    irObjID: null,
+    focused: false,
+  }
+}];
+
+export type FlowViewStat =
+  | { type: 'Empty' }
+  | { type: 'ShowFocusCfg' }
+  | { type: 'ShowFuncCfg', func: GlobalID }
+  | { type: 'ShowFuncDom', func: GlobalID }
+  ;
+
+export type FlowViewerProps = {
+  stat: FlowViewStat;
 };
 
-// Use any for edge props to avoid tight coupling with library Edge generic
-const RoutedFlowEdge: React.FC<FlowEdgeProps> = (props) => {
-    const { id, data } = props;
-    const main: string[] = Array.isArray(data?.mainPaths) ? data.mainPaths : []
-    const arrows: string[] = Array.isArray(data?.arrowPaths) ? data.arrowPaths : []
-
-    const gid = String(id ?? '')
-
-    const mainElems = main.map((path, idx) => (
-        <path key={`m-${idx}`} id={`${gid}-main-${idx}`} d={path} stroke="#222" strokeWidth={1} fill="none" />
-    ))
-    const arrowElems = arrows.map((path, idx) => (
-        <path key={`a-${idx}`} id={`${gid}-arrow-${idx}`} d={path} stroke="#222" strokeWidth={1} fill="#222" />
-    ))
-
-    return (<g id={gid} pointerEvents="none">{mainElems}{arrowElems}</g>);
+function getFocusBlock(module: ModuleCache, focus: FocusSourceInfo): BlockID | null {
+  let id = focus.id;
+  if (!id)
+    return null;
+  if ("Block" in id)
+    return id.Block;
+  if ("Inst" in id) {
+    let inst = module.loadInst(id.Inst);
+    if (!inst)
+      return null;
+    return inst.parent;
+  }
+  return null;
 }
 
-export type FlowViewerProps = ReactFlow.Node<any> & {}
+export default function FlowViewer({ stat }: FlowViewerProps) {
+  const [nodes, setNodes] = React.useState<FlowNode[]>([])
+  const [edges, setEdges] = React.useState<FlowEdge[]>([])
+  const irStore = useIRStore();
 
-export default function FlowViewer() {
-    const edgeTypes = React.useMemo(() => ({ routed: RoutedFlowEdge }), [])
+  const renderFuncCfg = useCallback(async (func: GlobalID, focusBB: BlockID | null) => {
+    if (!irStore.module)
+      throw new Error("IR module is not loaded");
 
-    const [nodes, setNodes] = React.useState<ReactFlow.Node<any>[]>([])
-    const [edges, setEdges] = React.useState<ReactFlow.Edge<any>[]>([])
+    const [nodes, edges] = await renderCfgOfFunc(irStore.module, func, focusBB) ?? [[], []];
+    setNodes(nodes);
+    setEdges(edges);
+  }, [irStore, setNodes, setEdges]);
+  const renderFuncDom = useCallback(async (func: GlobalID) => {
+    if (!irStore.module)
+      throw new Error("IR module is not loaded");
 
-    React.useEffect(() => {
-        let mounted = true;
-        (async () => {
-            try {
-                const json = await layoutCfgDot(CFG_DOT_TEXT)
-                const { nodes: nlayout, edges: elayout } = extractLayoutsFromGraphviz(json)
+    const [nodes, edges] = await renderDominanceOfFunc(func) ?? [[], []];
+    setNodes(nodes);
+    setEdges(edges);
+  }, [irStore, setNodes, setEdges]);
+  const selectStat = useCallback(() => {
+    const focus = irStore.focusInfo;
+    if (!irStore.module || !focus) {
+      setNodes(fallBackNodes);
+      setEdges([]);
+      return;
+    }
+    switch (stat.type) {
+      case 'Empty':
+        setNodes(fallBackNodes);
+        setEdges([]);
+        break;
+      case 'ShowFocusCfg': {
+        let scopeFunc = focus?.scopeId;
+        if (!scopeFunc) {
+          setNodes(fallBackNodes);
+          setEdges([]);
+          return;
+        }
+        let focusBB = getFocusBlock(irStore.module, focus);
+        renderFuncCfg(scopeFunc, focusBB).catch(err => {
+          console.error("Failed to render CFG:", err);
+          setNodes(fallBackNodes);
+          setEdges([]);
+        });
+        break;
+      }
+      case 'ShowFuncCfg':
+        let focusBB = getFocusBlock(irStore.module, focus);
+        renderFuncCfg(stat.func, focusBB).catch(err => {
+          console.error("Failed to render CFG:", err);
+          setNodes(fallBackNodes);
+          setEdges([]);
+        });
+        break;
+      case 'ShowFuncDom':
+        renderFuncDom(stat.func).catch(err => {
+          console.error("Failed to render dominance:", err);
+          setNodes(fallBackNodes);
+          setEdges([]);
+        });
+        break;
+    }
+  }, [stat, irStore, renderFuncCfg, renderFuncDom]);
 
-                const rfNodes: ReactFlow.Node<any>[] = nlayout.map(n => ({
-                    id: n.id,
-                    position: { x: n.x - n.width / 2, y: n.y - n.height / 2 },
-                    data: { label: n.id },
-                    draggable: false,
-                    selectable: true,
-                    style: { width: `${n.width}px`, height: `${n.height}px` }
-                }))
+  useEffect(() => {selectStat();}, [irStore, setNodes, setEdges]);
 
-                const rfEdges: ReactFlow.Edge<any>[] = elayout
-                    .filter(e => e.source && e.target)
-                    .map(e => ({
-                        id: e.id,
-                        source: e.source!,
-                        target: e.target!,
-                        type: 'routed',
-                        data: { mainPaths: e.mainPaths, arrowPaths: e.arrowPaths }
-                    }))
-
-                if (!mounted) return
-                setNodes(rfNodes)
-                setEdges(rfEdges)
-            } catch (err) {
-                console.error('layout error', err)
-            }
-        })()
-        return () => { mounted = false }
-    }, [])
-
-    return (
-        <ReactFlow.ReactFlow nodes={nodes} edges={edges} edgeTypes={edgeTypes} fitView >
-            <ReactFlow.Background />
-            <ReactFlow.Controls />
-        </ReactFlow.ReactFlow>
-    )
+  return (
+    <ReactFlowProvider>
+      <ReactFlow
+        nodeTypes={FlowNodeTypes} edgeTypes={FlowEdgeTypes} fitView
+        nodes={nodes} edges={edges}
+      >
+        <Background id="FlowViewerBasic" />
+        <Controls />
+      </ReactFlow>
+    </ReactFlowProvider>
+  );
 }

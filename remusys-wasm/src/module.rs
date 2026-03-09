@@ -8,6 +8,7 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::cfg::DomTreeDt;
 use crate::{console_log, dto::*, fmt_jserr, mapping::*};
 
 pub struct ModuleInfo {
@@ -562,5 +563,16 @@ impl ModuleInfo {
             .get_parent(allocs)
             .and_then(|bb| bb.get_parent_func(allocs))
             .map(FuncID::raw_into)
+    }
+
+    pub fn make_dominator_tree(&self, func_id: GlobalID) -> Result<DomTreeDt, JsError> {
+        let allocs = &self.module.allocs;
+        if !func_id.is_alive(allocs) {
+            return fmt_jserr!("Function with id {func_id:?} does not exist or has been deleted");
+        }
+        if !matches!(func_id.deref_ir(allocs), GlobalObj::Func(_)) {
+            return fmt_jserr!("global id {func_id:?} is not a function");
+        }
+        DomTreeDt::new(&self.module, FuncID::raw_from(func_id))
     }
 }

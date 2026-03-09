@@ -1,5 +1,6 @@
 import React from "react";
 import type { SourceTy } from "./ir/ir";
+import { handleFileLoad } from "./file-load";
 
 export interface FileLoaderProps {
   onLoad: (mode: SourceTy, text: string) => void;
@@ -13,30 +14,6 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad }) => {
     fileInputRef.current.value = "";
     fileInputRef.current.click();
   }, []);
-
-  const handleFile = React.useCallback((file: File) => {
-    const name = file.name || "";
-    const lower = name.toLowerCase();
-    let mode: SourceTy;
-    if (lower.endsWith(".ll") || lower.endsWith(".ir") || lower.endsWith(".remusys-ir")) {
-      mode = "ir";
-    } else if (lower.endsWith(".sy") || lower.endsWith(".sysy")) {
-      mode = "sysy";
-    } else {
-      alert(`文件类型错误：期望 *.ll, *.ir, *.remusys-ir 或 *.sy, 得到的文件名是 ${name}`);
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? "");
-      onLoad(mode!, text);
-    };
-    reader.onerror = () => {
-      alert(`无法读取文件 ${name}`);
-    };
-    reader.readAsText(file);
-  }, [onLoad]);
 
   return (
     <div
@@ -53,7 +30,7 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad }) => {
       onDrop={(e) => {
         e.preventDefault();
         const f = e.dataTransfer?.files?.[0];
-        if (f) handleFile(f);
+        if (f) handleFileLoad(f, onLoad);
       }}
     >
       <input
@@ -62,7 +39,7 @@ export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad }) => {
         style={{ display: "none" }}
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleFile(f);
+          if (f) handleFileLoad(f, onLoad);
         }}
       />
 

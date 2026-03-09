@@ -13,6 +13,7 @@
     "wasm-refresh": "npm install ../remusys-wasm/pkg/remusys-wasm-0.1.0.tgz"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.9",
     "@monaco-editor/react": "^4.7.0",
     "@types/dagre": "^0.7.54",
     "@viz-js/viz": "^3.24.0",
