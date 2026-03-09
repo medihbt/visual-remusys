@@ -70,7 +70,7 @@ export default function FlowViewer({ stat }: FlowViewerProps) {
   }, [irStore, setNodes, setEdges]);
   const selectStat = useCallback(() => {
     const focus = irStore.focusInfo;
-    if (!irStore.module || !focus) {
+    if (!irStore.module) {
       setNodes(fallBackNodes);
       setEdges([]);
       return;
@@ -81,6 +81,11 @@ export default function FlowViewer({ stat }: FlowViewerProps) {
         setEdges([]);
         break;
       case 'ShowFocusCfg': {
+        if (!focus) {
+          setNodes(fallBackNodes);
+          setEdges([]);
+          return;
+        }
         let scopeFunc = focus?.scopeId;
         if (!scopeFunc) {
           setNodes(fallBackNodes);
@@ -95,14 +100,15 @@ export default function FlowViewer({ stat }: FlowViewerProps) {
         });
         break;
       }
-      case 'ShowFuncCfg':
-        let focusBB = getFocusBlock(irStore.module, focus);
+      case 'ShowFuncCfg': {
+        const focusBB = focus ? getFocusBlock(irStore.module, focus) : null;
         renderFuncCfg(stat.func, focusBB).catch(err => {
           console.error("Failed to render CFG:", err);
           setNodes(fallBackNodes);
           setEdges([]);
         });
         break;
+      }
       case 'ShowFuncDom':
         renderFuncDom(stat.func).catch(err => {
           console.error("Failed to render dominance:", err);
@@ -113,7 +119,7 @@ export default function FlowViewer({ stat }: FlowViewerProps) {
     }
   }, [stat, irStore, renderFuncCfg, renderFuncDom]);
 
-  useEffect(() => {selectStat();}, [irStore, setNodes, setEdges]);
+  useEffect(() => { selectStat(); }, [selectStat]);
 
   return (
     <ReactFlowProvider>
