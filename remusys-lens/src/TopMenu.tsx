@@ -64,6 +64,9 @@ export default function TopMenu(actions: TopMenuActions) {
     };
     input.click();
   }
+  function save() {
+    alert("等待实现: 保存当前存档到浏览器...")
+  }
 
   return (
     <div style={menuStyle}>
@@ -71,9 +74,10 @@ export default function TopMenu(actions: TopMenuActions) {
         <MenuButton style={btnStyle}>文件</MenuButton>
         <MenuItems style={itemsStyle}>
           <MenuItem>
-            {({ focus }) => (
-              <div onClick={open} style={itemStyle(focus)}>打开...</div>
-            )}
+            {({ focus }) => (<div onClick={open} style={itemStyle(focus)}>打开...</div>)}
+          </MenuItem>
+          <MenuItem>
+            {({ focus }) => (<div onClick={save} style={itemStyle(focus)}>保存...</div>)}
           </MenuItem>
         </MenuItems>
       </Menu>

@@ -1,10 +1,17 @@
 import React, { useRef, useEffect } from 'react'
-import Editor from '@monaco-editor/react'
+import Editor, { type Monaco } from '@monaco-editor/react'
+import { editor } from "monaco-editor";
 import monarchLanguage from './llvmMonarch'
-import { useIRStore } from '../ir/ir-state'
+import { selectIRRevision, useIRStore } from '../ir/ir-state'
 import './LensViewer.css'
+import type { SourceTy } from '../ir/ir'
 
-function handleEditorMount(editor: any, monaco: any, editorRef: React.MutableRefObject<any>, monacoRef: React.MutableRefObject<any>) {
+function handleEditorMount(
+  editor: editor.IStandaloneCodeEditor,
+  monaco: any,
+  editorRef: React.RefObject<editor.IStandaloneCodeEditor | null>,
+  monacoRef: React.RefObject<any>
+) {
   try {
     const exists = monaco.languages.getLanguages().some((l: any) => l.id === 'llvm')
     if (!exists) monaco.languages.register({ id: 'llvm' })
@@ -21,14 +28,16 @@ function handleEditorMount(editor: any, monaco: any, editorRef: React.MutableRef
 }
 
 export type LensViewerProps = {
-  irText: string
+  irText: string;
+  srcType: SourceTy;
 }
 
-export default function LensViewer({ irText }: LensViewerProps) {
+export default function LensViewer({ irText, srcType }: LensViewerProps) {
   const focusInfo = useIRStore(s => s.focusInfo)
+  const revision = useIRStore(selectIRRevision)
   const moduleOverview = useIRStore(s => s.module?.brief.overview_src ?? s.sourceText)
-  const editorRef = useRef<any>(null)
-  const monacoRef = useRef<any>(null)
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<Monaco>(null)
   const decRef = useRef<string[]>([])
 
   useEffect(() => {
@@ -57,7 +66,7 @@ export default function LensViewer({ irText }: LensViewerProps) {
     const begin = focusInfo.highlightLoc.begin
     const end = focusInfo.highlightLoc.end
     try {
-      const range = new monaco.Range(begin.line, begin.column, end.line, end.column)
+      const range = new monaco.Range(begin.line, begin.column + 1, end.line, end.column + 1)
       decRef.current = editor.deltaDecorations(decRef.current, [{
         range,
         options: {
@@ -68,11 +77,13 @@ export default function LensViewer({ irText }: LensViewerProps) {
     } catch (e) {
       console.warn('LensViewer: failed to apply focus decoration', e)
     }
-  }, [focusInfo, irText])
+  }, [focusInfo, moduleOverview, irText, revision, srcType])
+
+  const language = srcType === "ir" ? "llvm" : srcType === "sysy" ? "c" : "text";
 
   return (
     <Editor
-      height="100%" language="llvm"
+      height="100%" language={language}
       value={irText}
       onMount={(editor, monaco) => handleEditorMount(editor, monaco, editorRef, monacoRef)}
       options={{

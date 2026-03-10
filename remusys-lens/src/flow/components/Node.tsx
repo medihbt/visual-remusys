@@ -42,7 +42,9 @@ export const FlowNodeComp: React.FC<FlowNodeProps> = (props) => {
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <Handle type="target" position={Position.Top} style={{ opacity: 0.5 }} />
       <div style={nodeStyle(selected, color)}>
-        <div style={{ padding: 8, fontSize: 12, color: "#111" }}>{props.data?.label}</div>
+        <div style={{ padding: 8, fontSize: 12, color: "#111", textAlign: "center", overflow: "hidden" }}>
+          {props.data?.label}
+        </div>
       </div>
       <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
     </div>

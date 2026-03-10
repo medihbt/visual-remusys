@@ -80,9 +80,14 @@ impl ModuleInfo {
     }
 
     pub fn compile_from_sysy(source: &str) -> Result<Self, JsError> {
-        let module = remusys_lang::translate_sysy_text_into_ir(source)
+        let module = remusys_lang::translate_sysy_text_into_full_ir(source)
             .map_err(|e| JsError::new(&format!("Failed to compile SysY source: {e}")))?;
-        Ok(Self::new(module))
+        let remusys_lang::ModuleInfo { module, names } = module;
+        Ok(Self {
+            module,
+            names,
+            overview: RefCell::new(None),
+        })
     }
     pub fn compile_from_ir(source: &str) -> Result<Self, JsError> {
         let ModuleWithInfo { module, namemap } = remusys_ir_parser::source_to_full_ir(source)

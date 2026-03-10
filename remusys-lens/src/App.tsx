@@ -124,11 +124,17 @@ export class IRFocus {
 export function MainPage() {
   const compileModule = useIRStore((state) => state.compileModule);
   const moduleCache = useIRStore(selectIRModule);
+  const moduleId = moduleCache?.moduleId ?? null;
   const irStatus = useIRStore(selectIRStatus);
   const irError = useIRStore(selectIRError);
   const [navEvent, setNavEvent] = React.useState<NavEvent | null>(null);
   const sourceText = useIRStore((s) => s.sourceText);
   const [flowStat, setFlowStat] = React.useState<FlowViewStat>({ type: "ShowFocusCfg" });
+
+  React.useEffect(() => {
+    setNavEvent(null);
+    setFlowStat({ type: "ShowFocusCfg" });
+  }, [moduleId]);
 
   let guideViewStatus: string;
   if (irStatus === "error") {
@@ -141,7 +147,9 @@ export function MainPage() {
 
   return (
     <div className="app-root">
-      <TopMenu onLoad = {compileModule} />
+      <TopMenu onLoad = {(ty, src) => {
+        compileModule(ty, src);
+      }} />
       {/* 左右分栏：左侧编辑器，右侧流程图 */}
       <ReflexContainer orientation="vertical" style={{ height: "100%" }}>
         <ReflexElement minSize={50} flex={40}>
@@ -155,7 +163,7 @@ export function MainPage() {
               style={{ height: "100%" }}
             >
               <ReflexElement minSize={50} flex={70}>
-                <div className="editor-wrap" style={{ flex: 1 }}><LensViewer irText={sourceText} /></div>
+                <div className="editor-wrap" style={{ flex: 1 }}><LensViewer irText={sourceText} srcType="ir" /></div>
               </ReflexElement>
               <ReflexSplitter />
               <ReflexElement minSize={50} flex={30}>

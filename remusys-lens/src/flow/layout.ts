@@ -14,6 +14,15 @@ export async function layoutFlow(
   return decodeLayout(nodes, edges, jsonObj);
 }
 function getDotObject(nodes: FlowNode[], edges: FlowEdge[]): Viz.Graph {
+  const nodeSizePixels = {
+    width: (nodes[0]?.width ?? 120) * 1.25, // add some padding to the default node size
+    height: (nodes[0]?.height ?? 45) * 1.25,
+  }
+  const nodeSizeInches = {
+    width: nodeSizePixels.width / 96, // assuming 96 DPI
+    height: nodeSizePixels.height / 96,
+  };
+
   let graph: Viz.Graph = {
     directed: true,
     nodes: nodes.map(n => ({ name: n.id })),
@@ -27,8 +36,15 @@ function getDotObject(nodes: FlowNode[], edges: FlowEdge[]): Viz.Graph {
     })),
     // Request smooth cubic splines from Graphviz. 'spline' asks for
     // interpolated cubic Bézier splines (smoother than polylines).
-    graphAttributes: { splines: 'spline' },
-    nodeAttributes: { shape: 'rectangle' },
+    graphAttributes: {
+      splines: 'spline'
+    },
+    nodeAttributes: {
+      shape: 'box',
+      width: nodeSizeInches.width,
+      height: nodeSizeInches.height,
+      fixedsize: true,
+    },
     edgeAttributes: { penwidth: '1' },
   };
   return graph;
@@ -200,9 +216,11 @@ function decodeLayout(nodes: FlowNode[], edges: FlowEdge[], json: GraphvizJSON):
       const DPI = 96; // pixels per inch
       const widthIn = obj.width ? parseFloat(obj.width as string) : undefined;
       const heightIn = obj.height ? parseFloat(obj.height as string) : undefined;
-      const w = typeof widthIn === 'number' && !Number.isNaN(widthIn) ? widthIn * DPI : (node.width ?? 64);
-      const h = typeof heightIn === 'number' && !Number.isNaN(heightIn) ? heightIn * DPI : (node.height ?? 64);
-      node.position = { x: x - w / 2, y: y - h / 2 };
+      const widthWithBox = typeof widthIn === 'number' && !Number.isNaN(widthIn) ? widthIn * DPI : (node.width ?? 64);
+      const heightWithBox = typeof heightIn === 'number' && !Number.isNaN(heightIn) ? heightIn * DPI : (node.height ?? 64);
+      const width = widthWithBox / 1.25; // remove the padding we added for layout
+      const height = heightWithBox / 1.25;
+      node.position = { x: x - width / 2, y: y - height / 2 };
       // store computed size for downstream consumers (if they reference it)
       if (!node.data) node.data = {} as any;
     }

@@ -17,6 +17,18 @@ export type CfgEdge = {
   kind: JTKind;
 };
 
+const strokeColors = {
+  Jump: "#222",
+  BrThen: "#16a34a",
+  BrElse: "#dc2626",
+  SwitchDefault: "#2563eb",
+  SwitchCase: "#d97706",
+};
+function getStrokeColor(kind: JTKind): string {
+  let kindSeg0 = kind.split(":")[0];
+  return strokeColors[kindSeg0 as keyof typeof strokeColors] ?? "#222";
+}
+
 export function makeCfg(module: ModuleCache, func: GlobalID): [CfgNode[], CfgEdge[]] | null {
   const funcDt = module.loadGlobal(func);
   if (funcDt.typeid !== "Func")
@@ -69,8 +81,8 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
         irObjID: { Block: n.id },
         bgColor: bgColor,
       },
-      width: 64,
-      height: 48,
+      width: 120,
+      height: 45,
       type: "flowNode",
     };
   });
@@ -87,6 +99,7 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
         labelY: 0,
         label: e.kind,
         irObjID: { JumpTarget: e.id },
+        strokeColor: getStrokeColor(e.kind),
       }
     }
   });

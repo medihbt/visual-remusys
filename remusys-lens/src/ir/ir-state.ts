@@ -308,6 +308,9 @@ function idleState(state: any) {
   state.sourceText = "";
   state.status = "idle";
   state.error = null;
+  state.focusedId = null;
+  state.focusInfo = null;
+  state.focusSince = null;
   state.revision += 1;
 }
 
@@ -325,7 +328,7 @@ export const useIRStore = create<IRStore>()(
       status: "idle",
       error: null,
       revision: 0,
-      focusedId: null as ir.SourceTrackable | null,
+      focusedId: null as ir.SourceTrackable | { Module: true } | null,
       focusInfo: null as FocusSourceInfo | null,
       focusSince: null as number | null,
 
@@ -343,6 +346,9 @@ export const useIRStore = create<IRStore>()(
               state.sourceText = source;
               state.status = "ready";
               state.error = null;
+              state.focusedId = null;
+              state.focusInfo = null;
+              state.focusSince = null;
               state.revision += 1;
             },
             false,
@@ -359,6 +365,9 @@ export const useIRStore = create<IRStore>()(
               state.sourceText = source;
               state.status = "error";
               state.error = normalizeError(error);
+              state.focusedId = null;
+              state.focusInfo = null;
+              state.focusSince = null;
               state.revision += 1;
             },
             false,
@@ -376,6 +385,9 @@ export const useIRStore = create<IRStore>()(
             state.sourceText = source;
             state.status = "ready";
             state.error = null;
+            state.focusedId = null;
+            state.focusInfo = null;
+            state.focusSince = null;
             state.revision += 1;
           },
           false,
@@ -494,32 +506,19 @@ export const useIRStore = create<IRStore>()(
       focusOn(id: ir.SourceTrackable | { Module: true }) {
         try {
           console.debug('ir-state: focusOn called with', id);
-          let info = focusSource(get() as IRStore, id);
+          const info = focusSource(get() as IRStore, id);
           console.debug('ir-state: focusSource returned', info);
-          // If focusSource couldn't compute info (e.g. partial module state), build a minimal fallback
-          if (!info) {
-            try {
-              const module = get().module;
-              let scopeId: ir.GlobalID | null = null;
-              if (module) {
-                if (!("Module" in id)) {
-                  const owning = module.getOwningFunc(id as ir.SourceTrackable);
-                  if (owning) scopeId = owning;
-                }
-              }
-              const sourceText = module ? (scopeId ? (module.globals.get(scopeId) as any)?.source ?? module.brief.overview_src : module.brief.overview_src) : "";
-              const highlightLoc = module ? (module.findSourceLoc(id as ir.SourceTrackable) ?? DEFAULT_RANGE) : DEFAULT_RANGE;
-              info = { id, scopeId, sourceText, highlightLoc };
-              console.debug('ir-state: built fallback focusInfo', info);
-            } catch (e) {
-              console.warn('ir-state: fallback focusInfo construction failed', e);
-            }
-          }
           set(
             (state) => {
-              state.focusedId = id;
-              state.focusInfo = info;
-              state.focusSince = Date.now();
+              if (!info) {
+                state.focusedId = null;
+                state.focusInfo = null;
+                state.focusSince = null;
+              } else {
+                state.focusedId = id;
+                state.focusInfo = info;
+                state.focusSince = Date.now();
+              }
               state.revision += 1;
             },
             false,
