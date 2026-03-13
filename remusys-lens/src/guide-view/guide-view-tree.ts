@@ -26,51 +26,12 @@ export function irObjectGetKind(obj: ir.IRValueObjectDt | null | undefined): Tre
       return obj.typeid;
   }
 }
-export type TreeNodeRef =
-  | { type: "Module" }
-  | { type: "GlobalObj"; global_id: ir.GlobalID }
-  | { type: "Block"; block_id: ir.BlockID }
-  | { type: "Inst"; inst_id: ir.InstID }
-  ;
-
-export function idStringify(id: TreeNodeRef): string {
+export function irIdGetKind(module: ModuleCache, id: ir.SourceTrackable): TreeNodeKind {
   switch (id.type) {
     case "Module":
       return "Module";
-    case "GlobalObj":
-      return id.global_id;
-    case "Block":
-      return id.block_id;
-    case "Inst":
-      return id.inst_id;
-    default:
-      throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
-  }
-}
-/**
- * Convert a TreeNodeRef to an IR SourceTrackable object when possible.
- * Returns null for module-level refs.
- */
-export function treeRefToSourceTrackable(id: TreeNodeRef): ir.SourceTrackable | null {
-  switch (id.type) {
-    case "Module":
-      return null;
-    case "GlobalObj":
-      return { Global: id.global_id };
-    case "Block":
-      return { Block: id.block_id };
-    case "Inst":
-      return { Inst: id.inst_id };
-    default:
-      return null;
-  }
-}
-export function irIdGetKind(module: ModuleCache, id: TreeNodeRef): TreeNodeKind {
-  switch (id.type) {
-    case "Module":
-      return "Module";
-    case "GlobalObj": {
-      const gobj = module.loadGlobal(id.global_id);
+    case "Global": {
+      const gobj = module.loadGlobal(id.value);
       switch (gobj.typeid) {
         case "GlobalVar":
           return gobj.linkage == "External" ? "ExternGlobalVar" : "GlobalVar";
@@ -80,28 +41,28 @@ export function irIdGetKind(module: ModuleCache, id: TreeNodeRef): TreeNodeKind 
     }
     case "Block": return "Block";
     case "Inst": {
-      const inst = module.loadInst(id.inst_id);
+      const inst = module.loadInst(id.value);
       return inst.typeid;
     }
     default:
       throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
   }
 }
-export function getNodeIdLabel(module: ModuleCache, id: TreeNodeRef): string {
+export function getNodeIdLabel(module: ModuleCache, id: ir.SourceTrackable): string {
   switch (id.type) {
     case "Module":
       return module.moduleId;
-    case "GlobalObj": {
-      const gobj = module.loadGlobal(id.global_id);
+    case "Global": {
+      const gobj = module.loadGlobal(id.value);
       return gobj.name;
     }
     case "Block": {
-      const block = module.loadBlock(id.block_id);
-      return block.name || `Block ${id.block_id}`;
+      const block = module.loadBlock(id.value);
+      return block.name || `Block ${id.value}`;
     }
     case "Inst": {
-      const inst = module.loadInst(id.inst_id);
-      return inst.name || `${inst.opcode} ${id.inst_id}`;
+      const inst = module.loadInst(id.value);
+      return inst.name || `${inst.opcode} ${id.value}`;
     }
     default:
       throw new Error(`Unknown TreeNodeRef type: ${(id as any).type}`);
@@ -119,10 +80,10 @@ export function getNodeIdLabel(module: ModuleCache, id: TreeNodeRef): string {
  */
 export interface GuideTreeNode {
   readonly moduleId: ir.ModuleID;
-  readonly selfId: TreeNodeRef;
+  readonly selfId: ir.SourceTrackable;
   readonly kind: TreeNodeKind;
-  readonly parentId: TreeNodeRef | null;
-  readonly childIds: TreeNodeRef[];
+  readonly parentId: ir.SourceTrackable | null;
+  readonly childIds: ir.SourceTrackable[];
   readonly label: string;
   readonly sourceLoc: ir.SourceLoc | null;
 }
@@ -144,7 +105,7 @@ export class TreeNodeStorage {
     }
     visit(node);
   }
-  private dfsRemove(id: TreeNodeRef) {
+  private dfsRemove(id: ir.SourceTrackable) {
     const node = this.get(id);
     if (!node) return;
     this.postDfs(node, n => {
@@ -152,14 +113,14 @@ export class TreeNodeStorage {
         case "Module":
           this.globalNode = null;
           break;
-        case "GlobalObj":
-          this.nodesById.delete(n.selfId.global_id);
+        case "Global":
+          this.nodesById.delete(n.selfId.value);
           break;
         case "Block":
-          this.nodesById.delete(n.selfId.block_id);
+          this.nodesById.delete(n.selfId.value);
           break;
         case "Inst":
-          this.nodesById.delete(n.selfId.inst_id);
+          this.nodesById.delete(n.selfId.value);
           break;
       }
     });
@@ -195,15 +156,11 @@ export class TreeNodeStorage {
         } else {
           return this.globalNode;
         }
-      case "GlobalObj":
-        id = selfId.global_id;
+      case "Global": case "Block": case "Inst":
+        id = selfId.value;
         break;
-      case "Block":
-        id = selfId.block_id;
-        break;
-      case "Inst":
-        id = selfId.inst_id;
-        break;
+      default:
+        throw new Error(`Source trackable ID ${JSON.stringify(selfId)} is not compatible with GuideTreeNode`);
     }
 
     const oldNode = this.nodesById.get(id) || null;
@@ -213,7 +170,7 @@ export class TreeNodeStorage {
     this.nodesById.set(id, node);
     return oldNode;
   }
-  expand(id: TreeNodeRef, module: ModuleCache): GuideTreeNode {
+  expand(id: ir.SourceTrackable, module: ModuleCache): GuideTreeNode {
     if (module.moduleId !== this.moduleId) {
       throw new Error(`Module ID mismatch: expected ${this.moduleId}, got ${module.moduleId}`);
     }
@@ -228,72 +185,81 @@ export class TreeNodeStorage {
           selfId: id,
           kind: "Module",
           parentId: null,
-          childIds: moduleBrief.globals.map(gid => ({ type: "GlobalObj", global_id: gid.id })),
+          childIds: moduleBrief.globals.map(gid => ({ type: "Global", value: gid.id })),
           label: this.moduleId,
           sourceLoc: null,
         };
         break;
       }
-      case "GlobalObj": {
-        const gobj = module.loadGlobal(id.global_id);
+      case "Global": {
+        const gobj = module.loadGlobal(id.value);
         newNode = {
           moduleId: this.moduleId,
           selfId: id,
           kind: irObjectGetKind(gobj),
           parentId: { type: "Module" },
-          childIds: gobj.typeid === "Func" && gobj.blocks ? gobj.blocks.map(bid => ({ type: "Block", block_id: bid.id })) : [],
-          label: gobj.name || `${gobj.typeid} ${id.global_id}`,
+          childIds: gobj.typeid === "Func" && gobj.blocks ? gobj.blocks.map(bid => ({ type: "Block", value: bid.id })) : [],
+          label: gobj.name || `${gobj.typeid} ${id.value}`,
           sourceLoc: gobj.overview_loc,
         };
         break;
       }
       case "Block": {
-        const block = module.loadBlock(id.block_id);
+        const block = module.loadBlock(id.value);
         newNode = {
           moduleId: this.moduleId,
           selfId: id,
           kind: "Block",
-          parentId: { type: "GlobalObj", global_id: block.parent },
-          childIds: block.insts.map(iid => ({ type: "Inst", inst_id: iid.id })),
-          label: block.name || `Block ${id.block_id}`,
+          parentId: { type: "Global", value: block.parent },
+          childIds: block.insts.map(iid => ({ type: "Inst", value: iid.id })),
+          label: block.name || `Block ${id.value}`,
           sourceLoc: block.source_loc,
         };
         break;
       }
       case "Inst": {
-        const inst = module.loadInst(id.inst_id);
+        const inst = module.loadInst(id.value);
         newNode = {
           moduleId: this.moduleId,
           selfId: id,
           kind: inst.typeid,
-          parentId: { type: "Block", block_id: inst.parent },
+          parentId: { type: "Block", value: inst.parent },
           childIds: [], // instructions don't have children in the tree structure
-          label: inst.name || `${inst.opcode} ${id.inst_id}`,
+          label: inst.name || `${inst.opcode} ${id.value}`,
           sourceLoc: inst.source_loc,
         };
         break;
       }
+      default: {
+        throw new Error(`Unknown SourceTrackable type: ${(id as any).type}`);
+      }
     }
-    console.debug('TreeNodeStorage.expand: adding node', idStringify(newNode.selfId), 'kind=', newNode.kind, 'children=', newNode.childIds.length);
+    console.debug(
+      'TreeNodeStorage.expand: adding node',
+      ir.sourceTrackableToString(newNode.selfId),
+      'kind=', newNode.kind,
+      'children=', newNode.childIds.length
+    );
     this.set(newNode);
     return newNode;
   }
-  expandChildren(id: TreeNodeRef, module: ModuleCache): GuideTreeNode[] {
+  expandChildren(id: ir.SourceTrackable, module: ModuleCache): GuideTreeNode[] {
     const node = this.get(id);
+    const idStr = ir.sourceTrackableToString(id);
     if (!node) {
-      throw new Error(`Node with ID ${idStringify(id)} not found in TreeNodeStorage`);
+      throw new Error(`Node with ID ${idStr} not found in TreeNodeStorage`);
     }
-    console.debug('TreeNodeStorage.expandChildren:', idStringify(id), 'childCount=', node.childIds.length);
+    console.debug('TreeNodeStorage.expandChildren:', idStr, 'childCount=', node.childIds.length);
     return node.childIds.map(childId => {
-      console.debug('TreeNodeStorage.expandChildren: expanding child', idStringify(childId));
+      console.debug('TreeNodeStorage.expandChildren: expanding child', ir.sourceTrackableToString(childId));
       return this.expand(childId, module);
     });
   }
-  dfsExpand(id: TreeNodeRef, module: ModuleCache): GuideTreeNode[] {
-    console.debug('TreeNodeStorage.dfsExpand: start', idStringify(id));
+  dfsExpand(id: ir.SourceTrackable, module: ModuleCache): GuideTreeNode[] {
+    console.debug('TreeNodeStorage.dfsExpand: start', ir.sourceTrackableToString(id));
     const result: GuideTreeNode[] = [];
 
-    const expandRec = (ref: TreeNodeRef) => {
+    const expandRec = (ref: ir.SourceTrackable) => {
       const node = this.expand(ref, module);
       result.push(node);
       for (const childId of node.childIds) {
@@ -305,7 +271,7 @@ export class TreeNodeStorage {
     console.debug('TreeNodeStorage.dfsExpand: result count', result.length);
     return result;
   }
-  collapse(id: TreeNodeRef): void {
+  collapse(id: ir.SourceTrackable): void {
     const node = this.get(id);
     if (!node) return;
     switch (id.type) {
@@ -316,7 +282,7 @@ export class TreeNodeStorage {
         break;
     }
   }
-  collapseChildren(id: TreeNodeRef): void {
+  collapseChildren(id: ir.SourceTrackable): void {
     const node = this.get(id);
     if (!node) return;
     for (const childId of node.childIds) {
@@ -329,7 +295,7 @@ export class TreeNodeStorage {
     newMap.replace(node);
     return newMap;
   }
-  constExpand(id: TreeNodeRef, module: ModuleCache): [GuideTreeNode, TreeNodeStorage] {
+  constExpand(id: ir.SourceTrackable, module: ModuleCache): [GuideTreeNode, TreeNodeStorage] {
     const node = this.get(id);
     if (node)
       return [node, this];
@@ -337,16 +303,14 @@ export class TreeNodeStorage {
     return [newMap.expand(id, module), newMap];
   }
 
-  get(id: TreeNodeRef): GuideTreeNode | null {
+  get(id: ir.SourceTrackable): GuideTreeNode | null {
     switch (id.type) {
       case "Module":
         return this.globalNode;
-      case "GlobalObj":
-        return this.nodesById.get(id.global_id) || null;
-      case "Block":
-        return this.nodesById.get(id.block_id) || null;
-      case "Inst":
-        return this.nodesById.get(id.inst_id) || null;
+      case "Global": case "Block": case "Inst":
+        return this.nodesById.get(id.value) || null;
+      default:
+        throw new Error(`Unknown SourceTrackable type: ${(id as any).type}`);
     }
   }
 
@@ -382,11 +346,13 @@ export class TreeNodeStorage {
         children: children,
       };
       nodes.push(exportNode);
+      const nodeIdStr = ir.sourceTrackableToString(node.selfId);
       for (const child of children) {
         if (!child.expanded)
           continue;
+        let treeNodeIdStr = ir.sourceTrackableToString(child.treeNode.selfId);
         edges.push({
-          id: `${idStringify(node.selfId)}->${idStringify(child.treeNode.selfId)}`,
+          id: `${nodeIdStr}->${treeNodeIdStr}`,
           source: exportNode,
           target: child,
         });
@@ -401,7 +367,7 @@ export class TreeNodeStorage {
     nodes.forEach(n => {
       if (!n.expanded)
         return;
-      newMap.set(idStringify(n.treeNode.selfId) as ir.PoolStrID, n.treeNode);
+      newMap.set(ir.sourceTrackableToString(n.treeNode.selfId) as ir.PoolStrID, n.treeNode);
     })
     this.nodesById = newMap;
     return {
@@ -424,7 +390,7 @@ export namespace Exported {
     expanded: false;
     label: string;
     kind: TreeNodeKind;
-    treeNode: TreeNodeRef;
+    treeNode: ir.SourceTrackable;
   };
   export type NodeData = ExpandedNode | CollapsedNode;
 

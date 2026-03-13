@@ -186,33 +186,52 @@ export type ValTypeID =
   | `i${number}`
   | `func:${string}`;
 
-export type UserID = { Global: GlobalID } | { Expr: ExprID } | { Inst: InstID };
+export type UserID =
+  | { type: "Inst"; value: InstID }
+  | { type: "Global"; value: GlobalID }
+  | { type: "Expr"; value: ExprID }
+  ;
 export type RefValueDt =
-  | { Global: GlobalID }
-  | { Block: BlockID }
-  | { Inst: InstID }
-  | { Expr: ExprID };
-
+  | UserID
+  | { type: "Block"; value: BlockID }
+  ;
 export type ValueDt =
-  | "None"
-  | { Undef: ValTypeID }
-  | { I1: boolean }
-  | { I8: number }
-  | { I16: number }
-  | { I32: number }
-  | { I64: string } // use string to represent i64 literals, since bigint cannot transfer over JSON
-  | { APInt: APIntDt }
-  | { F32: number }
-  | { F64: number }
-  | { ZeroInit: AggrTypeID }
-  | { FuncArg: [GlobalID, number] }
-  | RefValueDt;
+  | { type: "None" }
+  | { type: "Undef"; value: ValTypeID }
+  | { type: "I1"; value: boolean }
+  | { type: "I8"; value: number }
+  | { type: "I16"; value: number }
+  | { type: "I32"; value: number }
+  | { type: "I64"; value: string } // use string to represent i64 literals, since bigint cannot transfer over JSON
+  | { type: "APInt"; value: APIntDt }
+  | { type: "F32"; value: number }
+  | { type: "F64"; value: number }
+  | { type: "ZeroInit"; value: AggrTypeID }
+  | { type: "FuncArg"; value: [GlobalID, number] }
+  | RefValueDt
+  ;
 export type PoolAllocatedID =
   | RefValueDt
-  | { Use: UseID }
-  | { JumpTarget: JumpTargetID };
-
-export type SourceTrackable = PoolAllocatedID | { FuncArg: [GlobalID, number] };
+  | { type: "Use"; value: UseID }
+  | { type: "JumpTarget"; value: JumpTargetID }
+  ;
+export type SourceTrackable =
+  | PoolAllocatedID
+  | { type: "FuncArg"; value: [GlobalID, number] }
+  | { type: "Module" }
+  ;
+export function sourceTrackableToString(st: SourceTrackable): string {
+  switch (st.type) {
+    case "FuncArg":
+      return `FuncArg(${st.value[0]}, ${st.value[1]})`;
+    case "Module":
+      return "Module";
+    case "Global": case "Block": case "Inst": case "Expr": case "Use": case "JumpTarget":
+      return st.value;
+    default:
+      throw new Error(`Unknown SourceTrackable: ${JSON.stringify(st as any)}`);
+  }
+}
 
 export function irTypeGetName(module_id: string, t: ValTypeID): string {
   switch (t) {

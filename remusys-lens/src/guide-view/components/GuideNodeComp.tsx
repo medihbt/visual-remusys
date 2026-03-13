@@ -2,7 +2,6 @@ import React from "react";
 import { Handle, Position } from "@xyflow/react";
 import { TypeIcon } from "./TypeIcon";
 import { useIRStore } from "../../ir/ir-state";
-import type * as gv from "../guide-view-tree";
 import { ChildRow } from "./ChildRow";
 import type { GuideNodeCallbacks, GuideRFNodeProp } from "../types";
 
@@ -28,35 +27,26 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = (props) => {
   const focusedId = useIRStore((s) => s.focusedId);
   const focusInfo = useIRStore((s) => s.focusInfo);
   const isFocused = (() => {
-    const ref = nodeTree.selfId as gv.TreeNodeRef;
+    const ref = nodeTree.selfId;
     if (!focusedId && !focusInfo) return false;
     // module-level focus
     if (focusInfo && (focusInfo.id as any).Module && ref.type === "Module") return true;
 
     // direct id match
     if (focusedId) {
-      if ((focusedId as any).Module) {
+      if (focusedId.type === "Module") {
         if (ref.type === "Module") return true;
-      }
-      if (ref.type === "GlobalObj" && "Global" in focusedId) {
-        if (focusedId.Global === ref.global_id) return true;
-      }
-      if (ref.type === "Block" && "Block" in focusedId) {
-        if (focusedId.Block === ref.block_id) return true;
-      }
-      if (ref.type === "Inst" && "Inst" in focusedId) {
-        if (focusedId.Inst === ref.inst_id) return true;
+      } else if (focusedId.type === ref.type && focusedId.value === ref.value) {
+        return true;
       }
     }
 
     // scope-based match: if focused item belongs to a function, highlight the function node
-    if (focusInfo && focusInfo.scopeId) {
-      if (ref.type === "GlobalObj") {
-        // highlight function node when scope matches
-        if (focusInfo.scopeId === ref.global_id) return true;
-      }
+    if (focusInfo && focusInfo.scopeId &&
+      ref.type === "Global" &&
+      focusInfo.scopeId === ref.value) {
+      return true;
     }
-
     return false;
   })();
 
@@ -96,7 +86,18 @@ export const GuideNodeComp: React.FC<GuideNodeProps> = (props) => {
           <div style={{ flex: 1, fontSize: "13px", fontWeight: 600, color: "#1f2937", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {nodeTree.label}
           </div>
-          <div style={{ fontSize: "16px", color: "#9ca3af", marginLeft: "4px" }}>⋯</div>
+          <div
+            style={{ fontSize: "16px", color: "#9ca3af", marginLeft: "4px", cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onRequestMenu(e, nodeTree.selfId, data.kind);
+            }}
+          >
+            ⋯
+          </div>
         </div>
 
         {/* 子节点列表 */}

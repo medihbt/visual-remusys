@@ -477,9 +477,13 @@ impl ModuleInfo {
         let use_obj = use_id.deref_ir(&self.module.allocs);
         Ok(UseDt {
             id: use_id,
-            user: use_obj.user.get().ok_or_else(|| {
-                JsError::new(&format!("Use with id {use_id:?} has invalid user operand"))
-            })?,
+            user: use_obj
+                .user
+                .get()
+                .ok_or_else(|| JsError::new(&format!(
+                    "Use with id {use_id:?} has invalid user operand"
+                )))?
+                .into(),
             kind: use_obj.get_kind(),
             value: use_obj.operand.get().into(),
             source_loc: srcmap

@@ -1,8 +1,9 @@
 import { ReflexContainer, ReflexElement, ReflexSplitter } from "react-reflex";
 import "./App.css";
 import "react-reflex/styles.css";
+import '@xyflow/react/dist/style.css'
 import LensViewer from "./editor/LensViewer";
-import FlowViewer, { type FlowViewStat } from "./flow/FlowViewer";
+import FlowViewer, { type FlowGraphType } from "./flow/FlowViewer";
 import React from "react";
 import { GuideView } from "./guide-view/GuideView";
 import FileLoader from "./FileLoader";
@@ -15,46 +16,55 @@ import {
   type IRStoreStatus,
 } from "./ir/ir-state";
 import type { FocusEvent, NavEvent } from "./guide-view/types";
-import { idStringify, treeRefToSourceTrackable } from "./guide-view/guide-view-tree";
 import TopMenu from "./TopMenu";
+import { sourceTrackableToString } from "./ir/ir";
 
 // 将导航事件的处理逻辑抽出为独立函数，避免组件内堆积业务代码
 function handleNavEvent(
   event: NavEvent | null,
-  setFlowStat: React.Dispatch<React.SetStateAction<FlowViewStat>>,
+  setGraph: React.Dispatch<React.SetStateAction<FlowGraphType | undefined>>,
   clear: () => void
 ) {
   if (!event) return;
   switch (event.type) {
     case "Focus": {
       handleNavFocus(event);
-      setFlowStat({ type: "ShowFocusCfg" });
+      setGraph(undefined);
       break;
     }
     case "ExpandOne": case "ExpandAll": case "Collapse": {
       const { nodeRef, kind } = event;
-      const refDesc = idStringify(nodeRef);
+      const refDesc = sourceTrackableToString(nodeRef);
       console.debug(`GuideView: ${event.type} event received for nodeRef=${refDesc}, kind=${kind}`);
       break;
     }
     case "ShowCfg": {
       const { funcDef } = event;
       console.debug(`GuideView: ShowCfg event for funcDef=${funcDef}`);
-      setFlowStat({ type: "ShowFuncCfg", func: funcDef });
+      setGraph({ type: "FuncCfg", func: funcDef });
       break;
     }
     case "ShowDominance": {
       const { funcDef } = event;
-      alert(`显示函数支配树:\n函数引用: ${funcDef}`);
+      console.debug(`GuideView: ShowDominance event for funcDef=${funcDef}`);
+      setGraph({ type: "FuncDom", func: funcDef });
       break;
     }
     case "ShowDfg": {
       const { blockID } = event;
-      alert(`显示基本块 DFG:\n基本块引用: ${blockID}`);
+      console.debug(`GuideView: ShowDfg event for blockID=${blockID}`);
+      setGraph({ type: "BlockDfg", block: blockID });
+      break;
+    }
+    case "ShowValueDefUse": {
+      const { valueID } = event;
+      console.debug(`GuideView: ShowValueDefUse event for valueID=${valueID}`);
+      setGraph({ type: "DefUse", center: valueID });
       break;
     }
     default:
       console.warn("GuideView: unknown NavEvent type", event);
+      setGraph(undefined);
       break;
   }
   clear();
@@ -62,10 +72,10 @@ function handleNavEvent(
 
 function handleNavFocus(event: FocusEvent) {
   const { nodeRef, kind, label } = event;
-  const refDesc = idStringify(nodeRef);
+  const refDesc = sourceTrackableToString(nodeRef);
   console.debug(`GuideView: Focus event received for nodeRef=${refDesc}, kind=${kind}, label=${label}`);
   try {
-    const mapped = treeRefToSourceTrackable(nodeRef);
+    const mapped = nodeRef;
     console.debug('App.handleNavFocus: mapped treeRef ->', mapped);
     const s = useIRStore.getState();
     if (mapped) {
@@ -75,7 +85,7 @@ function handleNavFocus(event: FocusEvent) {
     } else {
       // Module-level focus
       console.debug('App.handleNavFocus: calling focusOn module sentinel');
-      s.focusOn({ Module: true });
+      s.focusOn({ type: "Module" });
       console.debug('App.handleNavFocus: focusOn returned for module');
     }
   } catch (e) {
@@ -129,12 +139,9 @@ export function MainPage() {
   const irError = useIRStore(selectIRError);
   const [navEvent, setNavEvent] = React.useState<NavEvent | null>(null);
   const sourceText = useIRStore((s) => s.sourceText);
-  const [flowStat, setFlowStat] = React.useState<FlowViewStat>({ type: "ShowFocusCfg" });
+  const [graph, setGraph] = React.useState<FlowGraphType | undefined>(undefined);
 
-  React.useEffect(() => {
-    setNavEvent(null);
-    setFlowStat({ type: "ShowFocusCfg" });
-  }, [moduleId]);
+  React.useEffect(() => { setNavEvent(null); setGraph(undefined); }, [moduleId]);
 
   let guideViewStatus: string;
   if (irStatus === "error") {
@@ -147,7 +154,7 @@ export function MainPage() {
 
   return (
     <div className="app-root">
-      <TopMenu onLoad = {(ty, src) => {
+      <TopMenu onLoad={(ty, src) => {
         compileModule(ty, src);
       }} />
       {/* 左右分栏：左侧编辑器，右侧流程图 */}
@@ -173,7 +180,7 @@ export function MainPage() {
                     moduleCache={moduleCache}
                     onNavigate={setNavEvent}
                     incomingNavEvent={navEvent}
-                    onConsumeNavEvent={(ev) => handleNavEvent(ev, setFlowStat, () => setNavEvent(null))}
+                    onConsumeNavEvent={(ev) => handleNavEvent(ev, setGraph, () => setNavEvent(null))}
                   />
                 ) : (
                   <div style={{ padding: 12, fontSize: 13, color: "#666" }}>
@@ -189,7 +196,7 @@ export function MainPage() {
 
         <ReflexElement flex={60}>
           <React.Suspense fallback={flowReplaceText}>
-            <FlowViewer stat={flowStat} />
+            <FlowViewer fgGraph={graph} />
           </React.Suspense>
         </ReflexElement>
       </ReflexContainer>

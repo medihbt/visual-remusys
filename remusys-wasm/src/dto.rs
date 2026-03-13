@@ -37,6 +37,7 @@ pub struct SourceLoc {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum RefValueDt {
     Global(GlobalID),
     Block(BlockID),
@@ -45,6 +46,25 @@ pub enum RefValueDt {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum UserIDDt {
+    Inst(InstID),
+    Global(GlobalID),
+    Expr(ExprID),
+}
+
+impl From<UserID> for UserIDDt {
+    fn from(u: UserID) -> Self {
+        match u {
+            UserID::Expr(id) => UserIDDt::Expr(id),
+            UserID::Inst(id) => UserIDDt::Inst(id),
+            UserID::Global(id) => UserIDDt::Global(id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum ValueDt {
     None,
     Undef(ValTypeID),
@@ -155,6 +175,7 @@ impl ValueDt {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum SourceTrackable {
     Global(GlobalID),
     Block(BlockID),
@@ -183,7 +204,7 @@ impl From<PoolAllocatedID> for SourceTrackable {
 #[derive(Debug, Clone, Serialize)]
 pub struct UseDt {
     pub id: UseID,
-    pub user: UserID,
+    pub user: UserIDDt,
     pub kind: UseKind,
     pub value: ValueDt,
     pub source_loc: Option<SourceLoc>,

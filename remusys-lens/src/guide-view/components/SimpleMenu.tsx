@@ -28,20 +28,21 @@ export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction,
     // 限制菜单在屏幕范围内
     const screenWidth = window.innerWidth;
     const screenHeight = window.innerHeight;
-    
+
     let left = x;
     let top = y;
-    
+
     // 如果超出右侧边界，向左偏移
     if (x + 200 > screenWidth) {
       left = screenWidth - 200;
     }
-    
+
     // 如果超出底部边界，向上偏移
-    if (y + 150 > screenHeight) {
-      top = screenHeight - 150;
+    let menuHeight = (items.length + 1) * 40; // 每项40px，高度根据项数计算
+    if (y + menuHeight > screenHeight) {
+      top = screenHeight - menuHeight;
     }
-    
+
     return { left, top };
   };
 

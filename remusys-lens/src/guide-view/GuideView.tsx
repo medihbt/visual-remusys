@@ -2,26 +2,18 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { ReactFlow, Background, Controls, useNodesState, useEdgesState, ReactFlowProvider } from "@xyflow/react";
 import * as dagre from "dagre";
 import { GuideNodeComp } from "./components/GuideNodeComp";
-import { TreeNodeStorage, type TreeNodeKind, type TreeNodeRef } from "./guide-view-tree";
+import { TreeNodeStorage, type TreeNodeKind } from "./guide-view-tree";
 import type { ModuleCache } from "../ir/ir-state";
 import type { GuideRFNode, GuideRFEdge, NavEvent } from "./types";
 import { SimpleMenu } from "./components/SimpleMenu";
 import { getNodeIdLabel } from "./guide-view-tree";
+import { sourceTrackableToString, type SourceTrackable } from "../ir/ir";
 
 interface GuideViewProps {
   moduleCache: ModuleCache;
   onNavigate: (event: NavEvent) => void; // 向外暴露导航事件（给代码编辑器、属性面板用）
   incomingNavEvent?: NavEvent | null; // 可选：接收来自外部的导航事件并执行
   onConsumeNavEvent?: (event: NavEvent) => void; // 在成功处理 incomingNavEvent 后调用以清理，将事件回传给外部
-}
-
-function nodeIdStr(ref: TreeNodeRef) {
-  switch (ref.type) {
-    case "Module": return "Module";
-    case "Block": return ref.block_id;
-    case "GlobalObj": return ref.global_id;
-    case "Inst": return ref.inst_id;
-  }
 }
 
 function renderTree(storage: TreeNodeStorage, module: ModuleCache): [GuideRFNode[], GuideRFEdge[]] {
@@ -31,7 +23,7 @@ function renderTree(storage: TreeNodeStorage, module: ModuleCache): [GuideRFNode
   const rfNodes: GuideRFNode[] = nodes
     .filter(n => n.expanded)
     .map(n => ({
-      id: nodeIdStr(n.treeNode.selfId),
+      id: sourceTrackableToString(n.treeNode.selfId),
       type: "guideNode",
       position: { x: 0, y: 0 },
       data: n,
@@ -41,8 +33,8 @@ function renderTree(storage: TreeNodeStorage, module: ModuleCache): [GuideRFNode
   // 转换 Edges
   const rfEdges: GuideRFEdge[] = edges.map(e => ({
     id: e.id,
-    source: nodeIdStr(e.source.treeNode.selfId),
-    target: nodeIdStr(e.target.treeNode.selfId),
+    source: sourceTrackableToString(e.source.treeNode.selfId),
+    target: sourceTrackableToString(e.target.treeNode.selfId),
     type: "default",
     markerEnd: { type: 'arrowclosed' }
   }));
@@ -83,7 +75,7 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
   const [menuState, setMenuState] = useState<{
     x: number;
     y: number;
-    nodeRef: TreeNodeRef;
+    nodeRef: SourceTrackable;
     kind: TreeNodeKind;
   } | null>(null);
 
@@ -117,7 +109,7 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
   }, [nodes]);
 
   // 5. 事件处理 (直接作用于 storage)
-  const handleToggle = useCallback((ref: TreeNodeRef) => {
+  const handleToggle = useCallback((ref: SourceTrackable) => {
     setStorage(prev => {
       const next = prev.shareClone();
       const exists = next.get(ref);
@@ -127,11 +119,11 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
     });
   }, [moduleCache]);
 
-  const handleFocus = useCallback((ref: TreeNodeRef, kind: TreeNodeKind, label: string) => {
+  const handleFocus = useCallback((ref: SourceTrackable, kind: TreeNodeKind, label: string) => {
     onNavigate({ type: 'Focus', nodeRef: ref, kind, label });
   }, [onNavigate]);
 
-  const handleRequestMenu = useCallback((e: React.MouseEvent, ref: TreeNodeRef, kind: TreeNodeKind) => {
+  const handleRequestMenu = useCallback((e: React.MouseEvent, ref: SourceTrackable, kind: TreeNodeKind) => {
     setMenuState({
       x: e.clientX,
       y: e.clientY,
@@ -189,7 +181,7 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
   }, [incomingNavEvent, moduleCache, onConsumeNavEvent]);
 
   // 根据节点类型生成 menu items（每项绑定一个 NavEvent）
-  const buildMenuItems = useCallback((ref: TreeNodeRef, kind: TreeNodeKind): { label: string; event: NavEvent }[] => {
+  const buildMenuItems = useCallback((ref: SourceTrackable, kind: TreeNodeKind): { label: string; event: NavEvent }[] => {
     const label = getNodeIdLabel(moduleCache, ref);
     const baseItems: { label: string; event: NavEvent }[] = [
       { label: "展开一层子节点", event: { type: "ExpandOne", nodeRef: ref, kind } },
@@ -200,13 +192,23 @@ export const GuideView: React.FC<GuideViewProps> = ({ moduleCache, onNavigate, i
 
     // 为特定类型增加额外操作
     if (kind === "Func") {
-      if (ref.type === "GlobalObj") {
-        baseItems.push({ label: "显示 CFG", event: { type: "ShowCfg", funcDef: ref.global_id } });
-        baseItems.push({ label: "显示支配树", event: { type: "ShowDominance", funcDef: ref.global_id } });
+      if (ref.type === "Global") {
+        baseItems.push({ label: "显示 CFG", event: { type: "ShowCfg", funcDef: ref.value } });
+        baseItems.push({ label: "显示支配树", event: { type: "ShowDominance", funcDef: ref.value } });
       }
     } else if (kind === "Block") {
       if (ref.type === "Block") {
-        baseItems.push({ label: "显示 DFG", event: { type: "ShowDfg", blockID: ref.block_id } });
+        baseItems.push({ label: "显示局部 def-use 关系", event: { type: "ShowDfg", blockID: ref.value } });
+      }
+    } else if (kind === "Inst") {
+      if (ref.type === "Inst") {
+        baseItems.push({
+          label: "显示指令 def-use 关系",
+          event: {
+            type: "ShowValueDefUse",
+            valueID: { type: "Inst", value: ref.value }
+          }
+        });
       }
     }
 

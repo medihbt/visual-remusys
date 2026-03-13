@@ -8,7 +8,7 @@ export type FlowEdgeData = {
   labelY: number;
   label: string;
   strokeColor?: string;
-  irObjID: SourceTrackable;
+  irObjID?: SourceTrackable;
 }
 
 export type FlowEdge = RFEdge<FlowEdgeData, "flowEdge">;

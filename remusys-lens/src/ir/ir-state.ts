@@ -58,27 +58,22 @@ export class ModuleCache {
   }
 
   findSourceLoc(id: ir.SourceTrackable): ir.SourceLoc | null {
-    if ("Global" in id) {
-      const g = this.globals.get(id.Global);
-      return g?.overview_loc ?? null;
-    }
-    if ("FuncArg" in id) {
-      const [fid, idx] = id.FuncArg;
-      const f = this.globals.get(fid);
-      if (f?.typeid !== "Func") {
-        return null;
+    switch (id.type) {
+      case "Global": return this.globals.get(id.value)?.overview_loc ?? null;
+      case "FuncArg": {
+        const [fid, idx] = id.value;
+        const f = this.globals.get(fid);
+        if (f?.typeid !== "Func") {
+          return null;
+        }
+        return f.args[idx]?.source_loc ?? null;
       }
-      return f.args[idx]?.source_loc ?? null;
+      case "Block": return this.blocks.get(id.value)?.source_loc ?? null;
+      case "Inst": return this.insts.get(id.value)?.source_loc ?? null;
+      case "Use": return this.uses.get(id.value)?.source_loc ?? null;
+      case "JumpTarget": return this.jts.get(id.value)?.source_loc ?? null;
+      default: return null;
     }
-    if ("Block" in id)
-      return this.blocks.get(id.Block)?.source_loc ?? null;
-    if ("Inst" in id)
-      return this.insts.get(id.Inst)?.source_loc ?? null;
-    if ("Use" in id)
-      return this.uses.get(id.Use)?.source_loc ?? null;
-    if ("JumpTarget" in id)
-      return this.jts.get(id.JumpTarget)?.source_loc ?? null;
-    return null;
   }
 
   loadGlobal(id: ir.GlobalID): ir.GlobalObjDt {
@@ -176,67 +171,61 @@ export class ModuleCache {
 
     // Handle eliminated items by removing them from caches or resetting locations
     for (const removed of updates.elliminated) {
-      if ("Global" in removed) {
-        this.globals.delete(removed.Global);
-      } else if ("Block" in removed) {
-        const bb = this.blocks.get(removed.Block);
-        if (bb) {
-          for (const inst of bb.insts) {
-            for (const u of inst.operands) this.uses.delete(u.id);
-            if (inst.typeid === "Terminator") {
-              for (const jt of inst.succs) this.jts.delete(jt.id);
-            }
-            this.insts.delete(inst.id);
+      switch (removed.type) {
+        case "Global": this.globals.delete(removed.value); break;
+        case "Block": this.blocks.delete(removed.value); break;
+        case "Inst": this.insts.delete(removed.value); break;
+        case "Use": this.uses.delete(removed.value); break;
+        case "JumpTarget": this.jts.delete(removed.value); break;
+        case "FuncArg": {
+          const [fid, idx] = removed.value;
+          const f = this.globals.get(fid);
+          if (f && f.typeid === "Func" && f.args && f.args[idx]) {
+            f.args[idx].source_loc = defaultRange;
           }
+          break;
         }
-        this.blocks.delete(removed.Block);
-      } else if ("Inst" in removed) {
-        const inst = this.insts.get(removed.Inst);
-        if (inst) {
-          for (const u of inst.operands) this.uses.delete(u.id);
-          if (inst.typeid === "Terminator") {
-            for (const jt of inst.succs) this.jts.delete(jt.id);
-          }
-        }
-        this.insts.delete(removed.Inst);
-      } else if ("Use" in removed) {
-        this.uses.delete(removed.Use);
-      } else if ("JumpTarget" in removed) {
-        this.jts.delete(removed.JumpTarget);
-      } else if ("FuncArg" in removed) {
-        const [fid, idx] = removed.FuncArg;
-        const f = this.globals.get(fid) as ir.FuncObjDt | undefined;
-        if (f && f.typeid === "Func" && f.args && f.args[idx]) {
-          f.args[idx].source_loc = defaultRange;
-        }
+        case "Expr": break; // untracked, ignore
+        default: throw new Error(`Unknown SourceTrackable type: ${(removed as any).type}`);
       }
-      // Expr and other untracked kinds are ignored
     }
     // Then apply location updates to existing items
     for (const r of updates.ranges) {
       const id = r.id;
       const new_loc = r.new_loc;
-      if ("Global" in id) {
-        const g = this.globals.get(id.Global);
-        if (g) g.overview_loc = new_loc;
-      } else if ("FuncArg" in id) {
-        const [fid, idx] = id.FuncArg;
-        const f = this.globals.get(fid) as ir.FuncObjDt | undefined;
-        if (f && f.typeid === "Func" && f.args && f.args[idx]) {
-          f.args[idx].source_loc = new_loc;
+      switch (id.type) {
+        case "Global": {
+          const g = this.globals.get(id.value);
+          if (g) g.overview_loc = new_loc;
+          break;
         }
-      } else if ("Block" in id) {
-        const bb = this.blocks.get(id.Block);
-        if (bb) bb.source_loc = new_loc;
-      } else if ("Inst" in id) {
-        const inst = this.insts.get(id.Inst);
-        if (inst) inst.source_loc = new_loc;
-      } else if ("Use" in id) {
-        const u = this.uses.get(id.Use);
-        if (u) u.source_loc = new_loc;
-      } else if ("JumpTarget" in id) {
-        const jt = this.jts.get(id.JumpTarget);
-        if (jt) jt.source_loc = new_loc;
+        case "FuncArg": {
+          const [fid, idx] = id.value;
+          const f = this.globals.get(fid);
+          if (f && f.typeid === "Func" && f.args && f.args[idx])
+            f.args[idx].source_loc = new_loc;
+          break;
+        }
+        case "Block": {
+          const bb = this.blocks.get(id.value);
+          if (bb) bb.source_loc = new_loc;
+          break;
+        }
+        case "Inst": {
+          const inst = this.insts.get(id.value);
+          if (inst) inst.source_loc = new_loc;
+          break;
+        }
+        case "Use": {
+          const u = this.uses.get(id.value);
+          if (u) u.source_loc = new_loc;
+          break;
+        }
+        case "JumpTarget": {
+          const jt = this.jts.get(id.value);
+          if (jt) jt.source_loc = new_loc;
+          break;
+        }
       }
     }
   }
@@ -260,6 +249,67 @@ export class ModuleCache {
       return [];
     return last.succs;
   }
+
+  getValueOperands(value: ir.ValueDt): ir.UseDt[] {
+    switch (value.type) {
+      case "Inst": {
+        const inst = this.loadInst(value.value);
+        return inst.operands.map(u => this.loadUse(u.id));
+      }
+      default:
+        // TODO: add use support for other users
+        return [];
+    }
+  }
+  getValueUsers(value: ir.ValueDt): ir.UseDt[] {
+    const users = ir.irValueGetUsedBy(this.moduleId, value);
+    return users.map(u => this.loadUse(u));
+  }
+  typeGetName(ty: ir.ValTypeID): string {
+    return ir.irTypeGetName(this.moduleId, ty);
+  }
+  valueGetName(value: ir.ValueDt): string {
+    switch (value.type) {
+      case "None": return "None";
+      case "I1": return `I1(${value.value})`;
+      case "I8": return `I8(${value.value})`;
+      case "I16": return `I16(${value.value})`;
+      case "I32": return `I32(${value.value})`;
+      case "I64": return `I64(${value.value})`;
+      case "APInt": {
+        let bits = value.value.bits;
+        let val = value.value.value;
+        return `I${bits}(${val})`;
+      }
+      case "F32": return `F32(${value.value})`;
+      case "F64": return `F64(${value.value})`;
+      case "Undef": return `Undef(type = ${this.typeGetName(value.value)})`;
+      case "Block": {
+        const block = this.loadBlock(value.value);
+        return block.name ? `label %${block.name}` : `label ${value.value}`;
+      }
+      case "Expr": {
+        return `Expr(${value.value})`;
+      }
+      case "Inst": {
+        const inst = this.loadInst(value.value);
+        return inst.name ? `%${inst.name}` : `${inst.opcode} ${value.value}`;
+      }
+      case "ZeroInit": return `ZeroInit(type = ${this.typeGetName(value.value)})`;
+      case "FuncArg": {
+        const [fid, idx] = value.value;
+        const func = this.loadGlobal(fid);
+        if (func.typeid !== "Func") {
+          throw new Error(`Global ${fid} is not a function`);
+        }
+        return func.args[idx].name ?? `@${func.name} arg${idx}`;
+      }
+      case "Global": {
+        const g = this.loadGlobal(value.value);
+        return g.name ? `@${g.name}` : value.value;
+      }
+    }
+  }
 }
 
 export type IRStoreStatus = "idle" | "ready" | "error";
@@ -271,7 +321,7 @@ export type IRStoreState = {
   status: IRStoreStatus;
   error: string | null;
   revision: number;
-  focusedId: ir.SourceTrackable | { Module: true } | null;
+  focusedId: ir.SourceTrackable | null;
   focusInfo: FocusSourceInfo | null;
   focusSince: number | null;
 };
@@ -292,7 +342,7 @@ export type IRStoreActions = {
   getSourceLoc: (id: ir.SourceTrackable) => ir.SourceLoc | null;
   renameSymbol: (id: ir.SourceTrackable, newName: string) => ir.SourceUpdates | null;
   getActiveModuleId: () => ModuleID | null;
-  focusOn: (id: ir.SourceTrackable | { Module: true }) => void;
+  focusOn: (id: ir.SourceTrackable) => void;
   clearFocus: () => void;
 };
 
@@ -328,7 +378,7 @@ export const useIRStore = create<IRStore>()(
       status: "idle",
       error: null,
       revision: 0,
-      focusedId: null as ir.SourceTrackable | { Module: true } | null,
+      focusedId: { type: "Module" } as ir.SourceTrackable,
       focusInfo: null as FocusSourceInfo | null,
       focusSince: null as number | null,
 
@@ -503,7 +553,7 @@ export const useIRStore = create<IRStore>()(
         }
       },
 
-      focusOn(id: ir.SourceTrackable | { Module: true }) {
+      focusOn(id: ir.SourceTrackable) {
         try {
           console.debug('ir-state: focusOn called with', id);
           const info = focusSource(get() as IRStore, id);
@@ -594,12 +644,12 @@ export function selectIRBrief(state: IRStore): ir.ModuleGlobalsDt | null {
 }
 
 export type FocusSourceInfo = {
-  id: ir.SourceTrackable | { Module: true };
+  id: ir.SourceTrackable;
   scopeId: ir.GlobalID | null;
   sourceText: string;
   highlightLoc: ir.SourceLoc;
 };
-export function focusSource(state: IRStore, id: ir.SourceTrackable | { Module: true }): FocusSourceInfo | null {
+export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSourceInfo | null {
   try {
     console.debug('ir-state.focusSource: called with', id);
     const module = state.module;
@@ -613,26 +663,26 @@ export function focusSource(state: IRStore, id: ir.SourceTrackable | { Module: t
     // otherwise scopeId is null (module scope).
     let scopeId: ir.GlobalID | null = null;
     // Module-level focus sentinel
-    if ("Module" in id) {
-      scopeId = null;
-      console.debug('ir-state.focusSource: module-level focus');
-    } else {
-      // If id itself is a Global and it's a loaded function object, treat it as function scope.
-      if ("Global" in id) {
-        const gid = id.Global;
-        const g = module.globals.get(gid);
-        console.debug('ir-state.focusSource: Global id=', gid, 'loaded=', !!g);
-        if (g && (g as any).typeid === "Func") {
-          scopeId = gid;
+    switch (id.type) {
+      case "Module":
+        scopeId = null;
+        console.debug('ir-state.focusSource: module-level focus');
+        break;
+      case "Global": {
+        const g = module.loadGlobal(id.value);
+        console.debug('ir-state.focusSource: Global id=', id.value, 'loaded=', !!g);
+        if (g && g.typeid === "Func" && g.blocks) {
+          scopeId = id.value;
           console.debug('ir-state.focusSource: scopeId set to global func', scopeId);
         }
+        break;
       }
-
-      // If we still don't have a scope, ask the module for the owning function (for blocks/insts/uses)
-      if (scopeId === null) {
-        const owning = module.getOwningFunc(id as ir.SourceTrackable);
+      default: {
+        // If we still don't have a scope, ask the module for the owning function (for blocks/insts/uses)
+        const owning = module.getOwningFunc(id);
         console.debug('ir-state.focusSource: owning func=', owning);
         if (owning) scopeId = owning;
+        break;
       }
     }
 

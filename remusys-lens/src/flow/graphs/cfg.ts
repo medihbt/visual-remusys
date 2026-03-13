@@ -1,7 +1,7 @@
-import type { BlockID, GlobalID, JTKind, JumpTargetID } from "../ir/ir";
-import { ModuleCache } from "../ir/ir-state";
-import type { FlowEdge } from "./components/Edge";
-import type { FlowNode } from "./components/Node";
+import type { BlockID, GlobalID, JTKind, JumpTargetID } from "../../ir/ir";
+import { ModuleCache } from "../../ir/ir-state";
+import type { FlowEdge } from "../components/Edge";
+import type { FlowNode } from "../components/Node";
 import { layoutFlow } from "./layout";
 
 export type CfgNodeKind = "Entry" | "Control" | "Exit";
@@ -78,7 +78,7 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
       data: {
         label: n.label,
         focused: n.id === focusBlock,
-        irObjID: { Block: n.id },
+        irObjID: { type: "Block", value: n.id },
         bgColor: bgColor,
       },
       width: 120,
@@ -98,7 +98,7 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
         labelX: 0,
         labelY: 0,
         label: e.kind,
-        irObjID: { JumpTarget: e.id },
+        irObjID: { type: "JumpTarget", value: e.id },
         strokeColor: getStrokeColor(e.kind),
       }
     }

@@ -38,12 +38,24 @@ export function nodeStyle(selected: boolean, color: string): React.CSSProperties
 export const FlowNodeComp: React.FC<FlowNodeProps> = (props) => {
   let selected = props.data?.focused ?? false;
   let color = props.data?.bgColor ?? "#e0e0e0";
+  let labelLines = (props.data?.label ?? "").split("\n");
+  let label: React.JSX.Element | string;
+  if (labelLines.length === 1) {
+    label = labelLines[0];
+  } else {
+    label = <>
+      {labelLines.map((line, idx) => (
+        <div key={idx}>{line}</div>
+      ))}
+    </>;
+  }
+
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       <Handle type="target" position={Position.Top} style={{ opacity: 0.5 }} />
       <div style={nodeStyle(selected, color)}>
         <div style={{ padding: 8, fontSize: 12, color: "#111", textAlign: "center", overflow: "hidden" }}>
-          {props.data?.label}
+          {label}
         </div>
       </div>
       <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
