@@ -42,6 +42,11 @@ export type ModuleID = `module-${number}`;
 
 export type PoolStrID = GlobalID | BlockID | InstID | ExprID | UseID | JumpTargetID;
 
+export type BlockDfgNodeID =
+  | InstID | ExprID | BlockID | GlobalID | UseID
+  | `FuncArg(${GlobalID}, ${number})`
+  ;
+
 export class IDCast {
   static asGlobal(id: string): id is GlobalID {
     return /^g:[0-9a-fA-F]+:[0-9a-fA-F]+$/.test(id);
@@ -69,6 +74,16 @@ export class IDCast {
       IDCast.asExpr(id) ||
       IDCast.asUse(id) ||
       IDCast.asJumpTarget(id)
+    );
+  }
+  static asBlockDfgNodeID(id: string): id is BlockDfgNodeID {
+    return (
+      IDCast.asInst(id) ||
+      IDCast.asExpr(id) ||
+      IDCast.asBlock(id) ||
+      IDCast.asGlobal(id) ||
+      IDCast.asUse(id) ||
+      /^FuncArg\(.+\)$/.test(id)
     );
   }
 }
@@ -220,6 +235,7 @@ export type SourceTrackable =
   | { type: "FuncArg"; value: [GlobalID, number] }
   | { type: "Module" }
   ;
+
 export function sourceTrackableToString(st: SourceTrackable): string {
   switch (st.type) {
     case "FuncArg":
@@ -396,4 +412,35 @@ export type DomTreeDt = {
 };
 export function makeDominatorTree(module_id: ModuleID, func_id: GlobalID): DomTreeDt {
   return Api.make_dominator_tree(module_id, func_id);
+}
+
+export type BlockDfgNodeDt = {
+  id: BlockDfgNodeID;
+  value: ValueDt;
+};
+export type BlockDfgEdgeDt = {
+  id: UseID;
+  kind: UseKind;
+  user: BlockDfgNodeID;
+  operand: BlockDfgNodeID;
+  section_id?: number;
+};
+export type BlockDfgSectionKind =
+  | "Pure"
+  | "Effect"
+  | "Income"
+  | "Outcome"
+  ;
+export type BlockDfgSectionDt = {
+  id: number;
+  nodes: BlockDfgNodeDt[];
+  kind: BlockDfgSectionKind;
+};
+export type BlockDfgDt = {
+  nodes: BlockDfgSectionDt[];
+  edges: BlockDfgEdgeDt[];
+};
+
+export function irMakeBlockDfg(module_id: ModuleID, block_id: BlockID): BlockDfgDt {
+  return Api.make_block_dfg(module_id, block_id);
 }

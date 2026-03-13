@@ -10,6 +10,7 @@ use wasm_bindgen::prelude::*;
 pub use crate::{dto::*, module::*};
 
 mod cfg;
+mod dfg;
 mod dto;
 mod mapping;
 mod module;
@@ -192,6 +193,11 @@ impl Api {
         let func_id = GlobalID::from_str(func_id).map_err(|s| JsError::new(&s))?;
         let dt = ModuleInfo::with_module(module_id, |m| m.make_dominator_tree(func_id))?;
         serialize_to_js(&dt).map_err(JsError::from)
+    }
+    pub fn make_block_dfg(module_id: &str, block_id: &str) -> Result<JsValue, JsError> {
+        let block_id = BlockID::from_str(block_id).map_err(|s| JsError::new(&s))?;
+        let dfg = ModuleInfo::with_module(module_id, |m| m.make_block_dfg(block_id))?;
+        serialize_to_js(&dfg).map_err(JsError::from)
     }
 }
 

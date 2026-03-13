@@ -310,6 +310,10 @@ export class ModuleCache {
       }
     }
   }
+
+  makeBlockDfg(blockID: ir.BlockID): ir.BlockDfgDt {
+    return ir.irMakeBlockDfg(this.moduleId, blockID);
+  }
 }
 
 export type IRStoreStatus = "idle" | "ready" | "error";

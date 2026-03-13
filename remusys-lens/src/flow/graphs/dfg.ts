@@ -94,32 +94,34 @@ export class DfgBuilder {
     return builder.extractDfg();
   }
   static buildInsideBlock(blockID: BlockID, module: ModuleCache): Dfg {
-    const builder = new DfgBuilder(module);
-    const blockObj = module.loadBlock(blockID);
-    const instsSet = new Set(blockObj.insts.map(inst => inst.id));
-    for (const instObj of blockObj.insts) {
-      const instValue: ValueDt = { type: "Inst", value: instObj.id };
-      builder.addNode(instValue, null, "Focused");
-      for (const useDt of module.getValueOperands(instValue)) {
-        let operandNodeKind: DfgNodeKind;
-        if (useDt.value.type === "Inst" && instsSet.has(useDt.value.value)) {
-          operandNodeKind = "Focused";
-        } else {
-          operandNodeKind = "Income";
+    const { nodes: sections, edges: edgesDt } = module.makeBlockDfg(blockID);
+    let nodes: DfgNode[] = [];
+    for (const section of sections) {
+      let { kind, nodes: nodesDt } = section;
+      let nodesInSection = nodesDt.map(nodeDt => {
+        let nodeKind: DfgNodeKind;
+        switch (kind) {
+          case "Pure": case "Effect": nodeKind = "Focused"; break;
+          case "Income": nodeKind = "Income"; break;
+          case "Outcome": nodeKind = "Outcome"; break;
+          default: nodeKind = "Focused"; break;
         }
-        builder.addEdgeWithNodes(useDt.id, "Focused", operandNodeKind);
-      }
-      for (const useDt of module.getValueUsers(instValue)) {
-        let userNodeKind: DfgNodeKind;
-        if (useDt.user.type === "Inst" && instsSet.has(useDt.user.value)) {
-          userNodeKind = "Focused";
-        } else {
-          userNodeKind = "Outcome";
-        }
-        builder.addEdgeWithNodes(useDt.id, userNodeKind, "Focused");
-      }
+        return {
+          nodeID: nodeDt.id,
+          value: nodeDt.value,
+          kind: nodeKind
+        } as DfgNode;
+      });
+      nodes = nodes.concat(nodesInSection);
     }
-    return builder.extractDfg();
+
+    let edges = edgesDt.map(edgeDt => ({
+      operandID: edgeDt.operand,
+      userID: edgeDt.user,
+      useKind: edgeDt.kind,
+      useID: edgeDt.id
+    }));
+    return { nodes, edges };
   }
 }
 

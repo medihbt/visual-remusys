@@ -9,6 +9,7 @@ use std::{
 use wasm_bindgen::prelude::*;
 
 use crate::cfg::DomTreeDt;
+use crate::dfg::BlockDfgDt;
 use crate::{console_log, dto::*, fmt_jserr, mapping::*};
 
 pub struct ModuleInfo {
@@ -480,9 +481,9 @@ impl ModuleInfo {
             user: use_obj
                 .user
                 .get()
-                .ok_or_else(|| JsError::new(&format!(
-                    "Use with id {use_id:?} has invalid user operand"
-                )))?
+                .ok_or_else(|| {
+                    JsError::new(&format!("Use with id {use_id:?} has invalid user operand"))
+                })?
                 .into(),
             kind: use_obj.get_kind(),
             value: use_obj.operand.get().into(),
@@ -583,5 +584,12 @@ impl ModuleInfo {
             return fmt_jserr!("global id {func_id:?} is not a function");
         }
         DomTreeDt::new(&self.module, FuncID::raw_from(func_id))
+    }
+
+    pub fn make_block_dfg(&self, block_id: BlockID) -> Result<BlockDfgDt, JsError> {
+        if !block_id.is_alive(&self.module.allocs) {
+            return fmt_jserr!("block id {block_id:?} is freed or disposed");
+        }
+        BlockDfgDt::new(&self.module, block_id)
     }
 }
