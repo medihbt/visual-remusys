@@ -25,27 +25,28 @@ const strokeColors = {
   SwitchCase: "#d97706",
 };
 function getStrokeColor(kind: JTKind): string {
-  let kindSeg0 = kind.split(":")[0];
+  const kindSeg0 = kind.split(":")[0];
   return strokeColors[kindSeg0 as keyof typeof strokeColors] ?? "#222";
 }
 
-export function makeCfg(module: ModuleCache, func: GlobalID): [CfgNode[], CfgEdge[]] | null {
+export function makeCfg(
+  module: ModuleCache,
+  func: GlobalID,
+): [CfgNode[], CfgEdge[]] | null {
   const funcDt = module.loadGlobal(func);
-  if (funcDt.typeid !== "Func")
-    return null;
-  if (!funcDt.blocks)
-    return null;
-  let entryNode = funcDt.blocks[0];
-  let nodes: CfgNode[] = [{
-    id: entryNode.id,
-    label: entryNode.name ?? entryNode.id,
-    kind: "Entry"
-  }];
-  let edges: CfgEdge[] = module
-    .getBlockSuccessors(entryNode)
-    .map(jt => {
-      return { id: jt.id, from: entryNode.id, to: jt.target, kind: jt.kind };
-    });
+  if (funcDt.typeid !== "Func") return null;
+  if (!funcDt.blocks) return null;
+  const entryNode = funcDt.blocks[0];
+  const nodes: CfgNode[] = [
+    {
+      id: entryNode.id,
+      label: entryNode.name ?? entryNode.id,
+      kind: "Entry",
+    },
+  ];
+  const edges: CfgEdge[] = module.getBlockSuccessors(entryNode).map((jt) => {
+    return { id: jt.id, from: entryNode.id, to: jt.target, kind: jt.kind };
+  });
 
   for (let i = 1; i < funcDt.blocks.length; i++) {
     const block = funcDt.blocks[i];
@@ -57,24 +58,40 @@ export function makeCfg(module: ModuleCache, func: GlobalID): [CfgNode[], CfgEdg
       kind,
     });
     for (const jt of succs) {
-      let edge: CfgEdge = { id: jt.id, from: block.id, to: jt.target, kind: jt.kind };
+      const edge: CfgEdge = {
+        id: jt.id,
+        from: block.id,
+        to: jt.target,
+        kind: jt.kind,
+      };
       edges.push(edge);
     }
   }
   return [nodes, edges];
 }
 
-export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusBlock: BlockID | null): Promise<[FlowNode[], FlowEdge[]]> {
-  const flowNodes: FlowNode[] = nodes.map(n => {
+export async function renderCfgToFlow(
+  nodes: CfgNode[],
+  edges: CfgEdge[],
+  focusBlock: BlockID | null,
+): Promise<[FlowNode[], FlowEdge[]]> {
+  const flowNodes: FlowNode[] = nodes.map((n) => {
     let bgColor: string;
     switch (n.kind) {
-      case "Entry": bgColor = "#d1fae5"; break;
-      case "Exit": bgColor = "#fee2e2"; break;
-      default: bgColor = "#ffffff"; break;
+      case "Entry":
+        bgColor = "#d1fae5";
+        break;
+      case "Exit":
+        bgColor = "#fee2e2";
+        break;
+      default:
+        bgColor = "#ffffff";
+        break;
     }
     return {
       id: n.id as string,
       position: { x: 0, y: 0 },
+      type: "elemNode",
       data: {
         label: n.label,
         focused: n.id === focusBlock,
@@ -83,10 +100,9 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
       },
       width: 120,
       height: 45,
-      type: "flowNode",
     };
   });
-  const flowEdges: FlowEdge[] = edges.map(e => {
+  const flowEdges: FlowEdge[] = edges.map((e) => {
     return {
       id: e.id as string,
       source: e.from as string,
@@ -100,8 +116,8 @@ export async function renderCfgToFlow(nodes: CfgNode[], edges: CfgEdge[], focusB
         label: e.kind,
         irObjID: { type: "JumpTarget", value: e.id },
         strokeColor: getStrokeColor(e.kind),
-      }
-    }
+      },
+    };
   });
   return await layoutFlow(flowNodes, flowEdges);
 }

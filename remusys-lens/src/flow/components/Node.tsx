@@ -2,15 +2,24 @@ import type { Node as RFNode, NodeProps } from "@xyflow/react";
 import { Handle, Position } from "@xyflow/react";
 import type { SourceTrackable } from "../../ir/ir";
 import type React from "react";
+import type { ReactNode } from "react";
 
-export type FlowNodeData = {
-  label: string;
+export type FlowElemNodeData = {
+  label: string | ReactNode;
   focused: boolean;
   irObjID: SourceTrackable | null;
   bgColor: string;
-}
+};
+export type FlowGroupNodeData = FlowElemNodeData & {
+  childIds: string[];
+};
 
-export type FlowNode = RFNode<FlowNodeData, "flowNode">;
+export type FlowElemNode = RFNode<FlowElemNodeData, "elemNode">;
+export type FlowGroupNode = RFNode<FlowGroupNodeData, "groupNode">;
+export type FlowNode = FlowElemNode | FlowGroupNode;
+
+export type FlowElemNodeProps = NodeProps<FlowElemNode>;
+export type FlowGroupNodeProps = NodeProps<FlowGroupNode>;
 export type FlowNodeProps = NodeProps<FlowNode>;
 
 const baseNodeStyle: React.CSSProperties = {
@@ -19,49 +28,69 @@ const baseNodeStyle: React.CSSProperties = {
   border: "1px solid #e5e7eb",
   // 圆角 3px，阴影使用 2px 的模糊半径（HTML 节点使用 CSS 样式）
   borderRadius: 3,
-  boxShadow: '0 0 2px rgba(0,0,0,0.06)',
-  overflow: 'hidden',
+  boxShadow: "0 0 2px rgba(0,0,0,0.06)",
+  overflow: "hidden",
 };
 const selectedNodeStyle: React.CSSProperties = {
   width: "100%",
   height: "100%",
   border: "1px solid #404040",
   borderRadius: 3,
-  overflow: 'hidden',
-  boxShadow: '0 0 2px rgba(0,0,0,0.12)',
+  overflow: "hidden",
+  boxShadow: "0 0 2px rgba(0,0,0,0.12)",
+  fontWeight: "bolder",
 };
 
-export function nodeStyle(selected: boolean, color: string): React.CSSProperties {
+function nodeStyle(selected: boolean, color: string): React.CSSProperties {
   const node = selected ? selectedNodeStyle : baseNodeStyle;
   return Object.assign({ backgroundColor: color }, node);
 }
-export const FlowNodeComp: React.FC<FlowNodeProps> = (props) => {
-  let selected = props.data?.focused ?? false;
-  let color = props.data?.bgColor ?? "#e0e0e0";
-  let labelLines = (props.data?.label ?? "").split("\n");
-  let label: React.JSX.Element | string;
-  if (labelLines.length === 1) {
-    label = labelLines[0];
-  } else {
-    label = <>
-      {labelLines.map((line, idx) => (
-        <div key={idx}>{line}</div>
-      ))}
-    </>;
-  }
 
+export const FlowElemNodeComp: React.FC<FlowElemNodeProps> = (props) => {
+  const selected = props.data?.focused ?? false;
+  const color = props.data?.bgColor ?? "#e0e0e0";
+
+  let labelElement: ReactNode = <div>unnamed node</div>;
+  if (props.data) {
+    const label = props.data.label;
+    if (typeof label === "string") labelElement = <div>{label}</div>;
+    else labelElement = label;
+  }
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0.5 }} />
-      <div style={nodeStyle(selected, color)}>
-        <div style={{ padding: 8, fontSize: 12, color: "#111", textAlign: "center", overflow: "hidden" }}>
-          {label}
-        </div>
-      </div>
-      <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
+      <Handle type="source" position={Position.Top} />
+      <div style={nodeStyle(selected, color)}>{labelElement}</div>
+      <Handle type="target" position={Position.Bottom} />
     </div>
   );
-}
+};
+
+const groupNodeStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  border: "2px dashed #c7c7c7",
+  borderRadius: 6,
+  backgroundColor: "rgba(240,240,240,0.6)",
+  padding: 6,
+  boxSizing: "border-box",
+  overflow: "hidden",
+};
+export const FlowGroupNodeComp: React.FC<FlowGroupNodeProps> = (props) => {
+  let labelElement: ReactNode | null = null;
+  if (props.data) {
+    const label = props.data.label;
+    if (typeof label === "string") labelElement = <div>{label}</div>;
+    else labelElement = label;
+  }
+  return (
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      <Handle type="source" position={Position.Top} />
+      <div style={groupNodeStyle}>{labelElement}</div>
+      <Handle type="target" position={Position.Bottom} />
+    </div>
+  );
+};
 export const FlowNodeTypes = {
-  flowNode: FlowNodeComp,
-}
+  elemNode: FlowElemNodeComp,
+  groupNode: FlowGroupNodeComp,
+};

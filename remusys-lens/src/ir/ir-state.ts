@@ -1,3 +1,4 @@
+import type { WritableDraft } from "immer";
 import * as ir from "./ir";
 import type { ModuleID } from "./ir";
 import { create } from "zustand";
@@ -30,8 +31,8 @@ export class ModuleCache {
   }
 
   static compileFrom(srcKind: ir.SourceTy, src: string): ModuleCache {
-    let moduleBrief = ir.irCompileModule(srcKind, src);
-    let cache = new ModuleCache(moduleBrief.id);
+    const moduleBrief = ir.irCompileModule(srcKind, src);
+    const cache = new ModuleCache(moduleBrief.id);
     cache.refreshBrief();
     return cache;
   }
@@ -59,7 +60,8 @@ export class ModuleCache {
 
   findSourceLoc(id: ir.SourceTrackable): ir.SourceLoc | null {
     switch (id.type) {
-      case "Global": return this.globals.get(id.value)?.overview_loc ?? null;
+      case "Global":
+        return this.globals.get(id.value)?.overview_loc ?? null;
       case "FuncArg": {
         const [fid, idx] = id.value;
         const f = this.globals.get(fid);
@@ -68,18 +70,23 @@ export class ModuleCache {
         }
         return f.args[idx]?.source_loc ?? null;
       }
-      case "Block": return this.blocks.get(id.value)?.source_loc ?? null;
-      case "Inst": return this.insts.get(id.value)?.source_loc ?? null;
-      case "Use": return this.uses.get(id.value)?.source_loc ?? null;
-      case "JumpTarget": return this.jts.get(id.value)?.source_loc ?? null;
-      default: return null;
+      case "Block":
+        return this.blocks.get(id.value)?.source_loc ?? null;
+      case "Inst":
+        return this.insts.get(id.value)?.source_loc ?? null;
+      case "Use":
+        return this.uses.get(id.value)?.source_loc ?? null;
+      case "JumpTarget":
+        return this.jts.get(id.value)?.source_loc ?? null;
+      default:
+        return null;
     }
   }
 
   loadGlobal(id: ir.GlobalID): ir.GlobalObjDt {
     let dt = this.globals.get(id);
     if (!dt) {
-      let brief = this.brief.globals.find(g => g.id === id);
+      const brief = this.brief.globals.find((g) => g.id === id);
       if (!brief) {
         throw new Error(`Global with ID ${id} not found in module brief`);
       }
@@ -89,19 +96,25 @@ export class ModuleCache {
     return dt;
   }
   loadFunc(id: ir.GlobalID): ir.FuncObjDt {
-    let obj = this.loadGlobal(id);
+    const obj = this.loadGlobal(id);
     if (obj.typeid !== "Func") {
       throw new Error(`Global ${id} is not a function`);
     }
     return obj as ir.FuncObjDt;
   }
-  private _loadLocal<I extends ir.PoolStrID, T>(id: I, map: Map<I, T>, name: string): T {
+  private _loadLocal<I extends ir.PoolStrID, T>(
+    id: I,
+    map: Map<I, T>,
+    name: string,
+  ): T {
     let dt = map.get(id);
     if (!dt) {
       this._registerGlobal(ir.irLoadFuncOfScope(this.moduleId, id)!);
       dt = map.get(id);
       if (!dt)
-        throw new Error(`${name} ${id} not found after loading its function`, { cause: { id, name } });
+        throw new Error(`${name} ${id} not found after loading its function`, {
+          cause: { id, name },
+        });
     }
     return dt;
   }
@@ -128,28 +141,27 @@ export class ModuleCache {
     }
   }
   private _registerFunc(func: ir.FuncObjDt) {
-    if (!func.blocks)
-      return;
-    for (let bb of func.blocks) {
+    if (!func.blocks) return;
+    for (const bb of func.blocks) {
       this._registerBlock(bb);
     }
   }
   private _registerBlock(bb: ir.BlockDt) {
     this.blocks.set(bb.id, bb);
-    for (let inst of bb.insts)
-      this._registerInst(inst);
+    for (const inst of bb.insts) this._registerInst(inst);
   }
   private _registerInst(inst: ir.InstDt) {
     this.insts.set(inst.id, inst);
-    for (let use of inst.operands)
-      this.uses.set(use.id, use);
+    for (const use of inst.operands) this.uses.set(use.id, use);
     if (inst.typeid === "Terminator") {
-      for (let jt of inst.succs)
-        this.jts.set(jt.id, jt);
+      for (const jt of inst.succs) this.jts.set(jt.id, jt);
     }
   }
 
-  applySourceUpdates(updates: ir.SourceUpdates, maybeFunc: ir.GlobalID | null = null): void {
+  applySourceUpdates(
+    updates: ir.SourceUpdates,
+    maybeFunc: ir.GlobalID | null = null,
+  ): void {
     if (updates.scope === "Func" && maybeFunc === null) {
       throw new Error("Func scope updates must provide the func id");
     }
@@ -158,7 +170,7 @@ export class ModuleCache {
         this.brief.overview_src = updates.source;
         break;
       case "Func": {
-        let func = this.loadGlobal(maybeFunc!) as ir.FuncObjDt;
+        const func = this.loadGlobal(maybeFunc!) as ir.FuncObjDt;
         func.source = updates.source;
         break;
       }
@@ -172,11 +184,21 @@ export class ModuleCache {
     // Handle eliminated items by removing them from caches or resetting locations
     for (const removed of updates.elliminated) {
       switch (removed.type) {
-        case "Global": this.globals.delete(removed.value); break;
-        case "Block": this.blocks.delete(removed.value); break;
-        case "Inst": this.insts.delete(removed.value); break;
-        case "Use": this.uses.delete(removed.value); break;
-        case "JumpTarget": this.jts.delete(removed.value); break;
+        case "Global":
+          this.globals.delete(removed.value);
+          break;
+        case "Block":
+          this.blocks.delete(removed.value);
+          break;
+        case "Inst":
+          this.insts.delete(removed.value);
+          break;
+        case "Use":
+          this.uses.delete(removed.value);
+          break;
+        case "JumpTarget":
+          this.jts.delete(removed.value);
+          break;
         case "FuncArg": {
           const [fid, idx] = removed.value;
           const f = this.globals.get(fid);
@@ -185,8 +207,10 @@ export class ModuleCache {
           }
           break;
         }
-        case "Expr": break; // untracked, ignore
-        default: throw new Error(`Unknown SourceTrackable type: ${(removed as any).type}`);
+        case "Expr":
+          break; // untracked, ignore
+        default:
+          throw new Error(`Unknown SourceTrackable type: ${removed.type}`);
       }
     }
     // Then apply location updates to existing items
@@ -230,23 +254,29 @@ export class ModuleCache {
     }
   }
 
-  hasId(id: ir.GlobalID | ir.BlockID | ir.InstID | ir.JumpTargetID | ir.UseID): boolean {
-    let startWith = id[0];
-    switch (startWith) {
-      case "g": return this.globals.has(id as ir.GlobalID);
-      case "b": return this.blocks.has(id as ir.BlockID);
-      case "i": return this.insts.has(id as ir.InstID);
-      case "j": return this.jts.has(id as ir.JumpTargetID);
-      case "u": return this.uses.has(id as ir.UseID);
-      default: return false;
+  hasId(
+    id: ir.GlobalID | ir.BlockID | ir.InstID | ir.JumpTargetID | ir.UseID,
+  ): boolean {
+    switch (id[0]) {
+      case "g":
+        return this.globals.has(id as ir.GlobalID);
+      case "b":
+        return this.blocks.has(id as ir.BlockID);
+      case "i":
+        return this.insts.has(id as ir.InstID);
+      case "j":
+        return this.jts.has(id as ir.JumpTargetID);
+      case "u":
+        return this.uses.has(id as ir.UseID);
+      default:
+        return false;
     }
   }
 
   getBlockSuccessors(block: ir.BlockDt): ir.JumpTargetDt[] {
     const insts = block.insts;
     const last = insts[insts.length - 1];
-    if (last.typeid !== "Terminator")
-      return [];
+    if (last.typeid !== "Terminator") return [];
     return last.succs;
   }
 
@@ -254,7 +284,7 @@ export class ModuleCache {
     switch (value.type) {
       case "Inst": {
         const inst = this.loadInst(value.value);
-        return inst.operands.map(u => this.loadUse(u.id));
+        return inst.operands.map((u) => this.loadUse(u.id));
       }
       default:
         // TODO: add use support for other users
@@ -263,27 +293,35 @@ export class ModuleCache {
   }
   getValueUsers(value: ir.ValueDt): ir.UseDt[] {
     const users = ir.irValueGetUsedBy(this.moduleId, value);
-    return users.map(u => this.loadUse(u));
+    return users.map((u) => this.loadUse(u));
   }
   typeGetName(ty: ir.ValTypeID): string {
     return ir.irTypeGetName(this.moduleId, ty);
   }
   valueGetName(value: ir.ValueDt): string {
     switch (value.type) {
-      case "None": return "None";
-      case "I1": return `I1(${value.value})`;
-      case "I8": return `I8(${value.value})`;
-      case "I16": return `I16(${value.value})`;
-      case "I32": return `I32(${value.value})`;
-      case "I64": return `I64(${value.value})`;
+      case "None":
+        return "None";
+      case "I1":
+        return `I1(${value.value})`;
+      case "I8":
+        return `I8(${value.value})`;
+      case "I16":
+        return `I16(${value.value})`;
+      case "I32":
+        return `I32(${value.value})`;
+      case "I64":
+        return `I64(${value.value})`;
       case "APInt": {
-        let bits = value.value.bits;
-        let val = value.value.value;
+        const { bits, value: val } = value.value;
         return `I${bits}(${val})`;
       }
-      case "F32": return `F32(${value.value})`;
-      case "F64": return `F64(${value.value})`;
-      case "Undef": return `Undef(type = ${this.typeGetName(value.value)})`;
+      case "F32":
+        return `F32(${value.value})`;
+      case "F64":
+        return `F64(${value.value})`;
+      case "Undef":
+        return `Undef(type = ${this.typeGetName(value.value)})`;
       case "Block": {
         const block = this.loadBlock(value.value);
         return block.name ? `label %${block.name}` : `label ${value.value}`;
@@ -295,7 +333,8 @@ export class ModuleCache {
         const inst = this.loadInst(value.value);
         return inst.name ? `%${inst.name}` : `${inst.opcode} ${value.value}`;
       }
-      case "ZeroInit": return `ZeroInit(type = ${this.typeGetName(value.value)})`;
+      case "ZeroInit":
+        return `ZeroInit(type = ${this.typeGetName(value.value)})`;
       case "FuncArg": {
         const [fid, idx] = value.value;
         const func = this.loadGlobal(fid);
@@ -332,7 +371,11 @@ export type IRStoreState = {
 
 export type IRStoreActions = {
   compileModule: (kind: ir.SourceTy, source: string) => ModuleID | null;
-  attachModule: (module: ModuleCache, kind: ir.SourceTy, source: string) => void;
+  attachModule: (
+    module: ModuleCache,
+    kind: ir.SourceTy,
+    source: string,
+  ) => void;
   clear: () => void;
   refreshModuleSourceMappings: () => ir.SourceUpdates | null;
   refreshFuncSourceMappings: (funcId: ir.GlobalID) => ir.SourceUpdates | null;
@@ -344,7 +387,10 @@ export type IRStoreActions = {
   getUse: (id: ir.UseID) => ir.UseDt | null;
   getJumpTarget: (id: ir.JumpTargetID) => ir.JumpTargetDt | null;
   getSourceLoc: (id: ir.SourceTrackable) => ir.SourceLoc | null;
-  renameSymbol: (id: ir.SourceTrackable, newName: string) => ir.SourceUpdates | null;
+  renameSymbol: (
+    id: ir.SourceTrackable,
+    newName: string,
+  ) => ir.SourceUpdates | null;
   getActiveModuleId: () => ModuleID | null;
   focusOn: (id: ir.SourceTrackable) => void;
   clearFocus: () => void;
@@ -356,7 +402,7 @@ function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 // operate on draft, not IRState
-function idleState(state: any) {
+function idleState(state: WritableDraft<IRStore>) {
   state.module = null;
   state.sourceKind = null;
   state.sourceText = "";
@@ -411,7 +457,10 @@ export const useIRStore = create<IRStore>()(
           return module.moduleId;
         } catch (error) {
           alert(`Failed to compile module: ${normalizeError(error)}`);
-          console.error("Module compilation error:", (error instanceof Error ? error.stack : error));
+          console.error(
+            "Module compilation error:",
+            error instanceof Error ? error.stack : error,
+          );
           set(
             (state) => {
               state.module = null;
@@ -559,9 +608,9 @@ export const useIRStore = create<IRStore>()(
 
       focusOn(id: ir.SourceTrackable) {
         try {
-          console.debug('ir-state: focusOn called with', id);
+          console.debug("ir-state: focusOn called with", id);
           const info = focusSource(get() as IRStore, id);
-          console.debug('ir-state: focusSource returned', info);
+          console.debug("ir-state: focusSource returned", info);
           set(
             (state) => {
               if (!info) {
@@ -578,9 +627,12 @@ export const useIRStore = create<IRStore>()(
             false,
             "ir/focus-on",
           );
-          console.debug('ir-state: focus state set, new focusedId=', get().focusedId);
+          console.debug(
+            "ir-state: focus state set, new focusedId=",
+            get().focusedId,
+          );
         } catch (error) {
-          console.warn('ir-state: focusOn error', error);
+          console.warn("ir-state: focusOn error", error);
           set(
             (state) => {
               state.error = normalizeError(error);
@@ -606,7 +658,9 @@ export const useIRStore = create<IRStore>()(
       },
 
       renameSymbol(id, newName) {
-        throw new Error(`Renaming(${id} to ${newName}) not supported yet: waiting for WASM`)
+        throw new Error(
+          `Renaming(${id} to ${newName}) not supported yet: waiting for WASM`,
+        );
       },
 
       getGlobal: (id) => get().module?.globals.get(id) ?? null,
@@ -653,15 +707,18 @@ export type FocusSourceInfo = {
   sourceText: string;
   highlightLoc: ir.SourceLoc;
 };
-export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSourceInfo | null {
+export function focusSource(
+  state: IRStore,
+  id: ir.SourceTrackable,
+): FocusSourceInfo | null {
   try {
-    console.debug('ir-state.focusSource: called with', id);
+    console.debug("ir-state.focusSource: called with", id);
     const module = state.module;
     if (!module) {
-      console.debug('ir-state.focusSource: no module');
+      console.debug("ir-state.focusSource: no module");
       return null;
     }
-    console.debug('ir-state.focusSource: moduleId=', module.moduleId);
+    console.debug("ir-state.focusSource: moduleId=", module.moduleId);
 
     // Determine scope: if the id belongs to a function scope, use that function's GlobalID;
     // otherwise scopeId is null (module scope).
@@ -670,21 +727,29 @@ export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSource
     switch (id.type) {
       case "Module":
         scopeId = null;
-        console.debug('ir-state.focusSource: module-level focus');
+        console.debug("ir-state.focusSource: module-level focus");
         break;
       case "Global": {
         const g = module.loadGlobal(id.value);
-        console.debug('ir-state.focusSource: Global id=', id.value, 'loaded=', !!g);
+        console.debug(
+          "ir-state.focusSource: Global id=",
+          id.value,
+          "loaded=",
+          !!g,
+        );
         if (g && g.typeid === "Func" && g.blocks) {
           scopeId = id.value;
-          console.debug('ir-state.focusSource: scopeId set to global func', scopeId);
+          console.debug(
+            "ir-state.focusSource: scopeId set to global func",
+            scopeId,
+          );
         }
         break;
       }
       default: {
         // If we still don't have a scope, ask the module for the owning function (for blocks/insts/uses)
         const owning = module.getOwningFunc(id);
-        console.debug('ir-state.focusSource: owning func=', owning);
+        console.debug("ir-state.focusSource: owning func=", owning);
         if (owning) scopeId = owning;
         break;
       }
@@ -698,29 +763,46 @@ export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSource
         sourceText = f.source;
       }
     }
-    console.debug('ir-state.focusSource: chosen sourceText length=', sourceText?.length ?? 0, 'scopeId=', scopeId);
+    console.debug(
+      "ir-state.focusSource: chosen sourceText length=",
+      sourceText?.length ?? 0,
+      "scopeId=",
+      scopeId,
+    );
 
     // Determine highlight location. Prefer precise item source_loc; for focusing a function
     // itself, aggregate its blocks' ranges if possible.
     let highlightLoc: ir.SourceLoc | null = null;
 
     // If focusing a Global function and we have loaded func blocks, compute bounding range
-    if (("Global" in id) && scopeId !== null && (id.Global === scopeId)) {
+    if ("Global" in id && scopeId !== null && id.Global === scopeId) {
       const f = module.globals.get(scopeId) as ir.FuncObjDt | undefined;
       if (f && f.typeid === "Func" && f.blocks && f.blocks.length > 0) {
-        let begin = { line: Number.MAX_SAFE_INTEGER, column: Number.MAX_SAFE_INTEGER };
+        let begin = {
+          line: Number.MAX_SAFE_INTEGER,
+          column: Number.MAX_SAFE_INTEGER,
+        };
         let end = { line: 0, column: 0 };
         for (const bb of f.blocks) {
           const loc = bb.source_loc;
           if (!loc) continue;
-          if (loc.begin.line < begin.line || (loc.begin.line === begin.line && loc.begin.column < begin.column))
+          if (
+            loc.begin.line < begin.line ||
+            (loc.begin.line === begin.line && loc.begin.column < begin.column)
+          )
             begin = { ...loc.begin };
-          if (loc.end.line > end.line || (loc.end.line === end.line && loc.end.column > end.column))
+          if (
+            loc.end.line > end.line ||
+            (loc.end.line === end.line && loc.end.column > end.column)
+          )
             end = { ...loc.end };
         }
         if (begin.line !== Number.MAX_SAFE_INTEGER) {
           highlightLoc = { begin, end };
-          console.debug('ir-state.focusSource: function bounding highlightLoc=', highlightLoc);
+          console.debug(
+            "ir-state.focusSource: function bounding highlightLoc=",
+            highlightLoc,
+          );
         }
       }
     }
@@ -729,7 +811,10 @@ export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSource
     if (!highlightLoc) {
       const loc = module.findSourceLoc(id as ir.SourceTrackable);
       highlightLoc = loc ?? DEFAULT_RANGE;
-      console.debug('ir-state.focusSource: fallback highlightLoc=', highlightLoc);
+      console.debug(
+        "ir-state.focusSource: fallback highlightLoc=",
+        highlightLoc,
+      );
     }
 
     const res: FocusSourceInfo = {
@@ -738,10 +823,10 @@ export function focusSource(state: IRStore, id: ir.SourceTrackable): FocusSource
       sourceText,
       highlightLoc,
     };
-    console.debug('ir-state.focusSource: returning', res);
+    console.debug("ir-state.focusSource: returning", res);
     return res;
   } catch (e) {
-    console.warn('ir-state.focusSource: error', e);
+    console.warn("ir-state.focusSource: error", e);
     return null;
   }
 }

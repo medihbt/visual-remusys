@@ -9,20 +9,25 @@ export interface ChildRowProps {
 }
 
 export const ChildRow: React.FC<ChildRowProps> = ({ child, onToggle }) => {
+  // eslint-disable-next-line prefer-const
   let { expanded: isExpanded, kind, label } = child;
 
   if (!label || label.trim() === "") {
     label = "(no name)";
   }
-  if (!kind)
-    throw new Error(`Child node ${label} is missing kind information`);
+  if (!kind) throw new Error(`Child node ${label} is missing kind information`);
 
   return (
     <div
-      onClick={(e) => { e.stopPropagation(); onToggle(child.treeNode); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(child.treeNode);
+      }}
       className={`guide-child-row${isExpanded ? " expanded" : ""}`}
     >
-      <div className="guide-child-row__icon"><TypeIcon kind={kind} size={16} /></div>
+      <div className="guide-child-row__icon">
+        <TypeIcon kind={kind} size={16} />
+      </div>
       <div className="guide-child-row__label">{label}</div>
 
       {/* 简单的展开指示器 */}

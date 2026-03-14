@@ -17,7 +17,13 @@ interface SimpleMenuProps {
   items: MenuItem[];
 }
 
-export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction, items }) => {
+export const SimpleMenu: React.FC<SimpleMenuProps> = ({
+  x,
+  y,
+  onClose,
+  onAction,
+  items,
+}) => {
   // 1. 事件处理：防止菜单点击穿透
   const handleMenuClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -38,7 +44,7 @@ export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction,
     }
 
     // 如果超出底部边界，向上偏移
-    let menuHeight = (items.length + 1) * 40; // 每项40px，高度根据项数计算
+    const menuHeight = (items.length + 1) * 40; // 每项40px，高度根据项数计算
     if (y + menuHeight > screenHeight) {
       top = screenHeight - menuHeight;
     }
@@ -62,23 +68,28 @@ export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction,
         zIndex: 1000,
         fontFamily: "system-ui, sans-serif",
         overflow: "hidden",
-        userSelect: "none"
+        userSelect: "none",
       }}
       onClick={handleMenuClick}
     >
       {items.map((it, idx) => (
         <div
           key={idx}
-          onClick={() => { console.debug('SimpleMenu: item click', it); onAction(it.event); }}
+          onClick={() => {
+            console.debug("SimpleMenu: item click", it);
+            onAction(it.event);
+          }}
           style={{
             padding: "10px 15px",
             cursor: "pointer",
             fontSize: "13px",
             color: "#4b5563",
             transition: "background-color 0.1s",
-            borderTop: idx === 0 ? "none" : "1px solid #e5e7eb"
+            borderTop: idx === 0 ? "none" : "1px solid #e5e7eb",
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f3f4f6")}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.backgroundColor = "#f3f4f6")
+          }
           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#fff")}
         >
           {it.label}
@@ -94,7 +105,7 @@ export const SimpleMenu: React.FC<SimpleMenuProps> = ({ x, y, onClose, onAction,
           fontSize: "13px",
           color: "#9ca3af",
           borderTop: "1px solid #e5e7eb",
-          textAlign: "center"
+          textAlign: "center",
         }}
       >
         取消

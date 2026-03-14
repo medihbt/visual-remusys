@@ -10,112 +10,125 @@ import { renderDominanceOfFunc } from "./graphs/dominance";
 import { renderDfgFromCentered, renderDfgInsideBlock } from "./graphs/dfg";
 import "./FlowViewer.css";
 
-const noFuncSelectNodes: FlowNode[] = [{
-  id: 'module:empty',
-  position: { x: 0, y: 0 },
-  type: 'flowNode',
-  data: {
-    label: 'No function selected',
-    bgColor: '#fef3c7',
-    irObjID: null,
-    focused: false,
-  }
-}];
+const noFuncSelectNodes: FlowNode[] = [
+  {
+    id: "module:empty",
+    position: { x: 0, y: 0 },
+    type: "elemNode",
+    data: {
+      label: "No function selected",
+      bgColor: "#fef3c7",
+      irObjID: null,
+      focused: false,
+    },
+  },
+];
 function showErrorNodes(message: string, sourceLoc?: string): FlowNode[] {
   let label = `Error: ${message}`;
   if (sourceLoc) {
     label += `\nSource: ${sourceLoc}`;
   }
-  return [{
-    id: 'module:error',
-    position: { x: 0, y: 0 },
-    type: 'flowNode',
-    data: {
-      label,
-      bgColor: '#fee2e2',
-      irObjID: null,
-      focused: false,
-    }
-  }];
+  return [
+    {
+      id: "module:error",
+      position: { x: 0, y: 0 },
+      type: "elemNode",
+      data: {
+        label,
+        bgColor: "#fee2e2",
+        irObjID: null,
+        focused: false,
+      },
+    },
+  ];
 }
 function todoNodes(feature: string): FlowNode[] {
-  return [{
-    id: 'module:todo',
-    position: { x: 0, y: 0 },
-    type: 'flowNode',
-    data: {
-      label: `TODO: ${feature} not implemented`,
-      bgColor: '#e0e0e0',
-      irObjID: null,
-      focused: false,
-    }
-  }];
+  return [
+    {
+      id: "module:todo",
+      position: { x: 0, y: 0 },
+      type: "elemNode",
+      data: {
+        label: `TODO: ${feature} not implemented`,
+        bgColor: "#e0e0e0",
+        irObjID: null,
+        focused: false,
+      },
+    },
+  ];
 }
 
 export type FlowGraphType =
-  | { type: 'Empty' }
-  | { type: 'Focus' }
-  | { type: 'CallGraph' }
-  | { type: 'ItemReference', item: GlobalID }
-  | { type: 'FuncCfg', func: GlobalID }
-  | { type: 'FuncDom', func: GlobalID }
-  | { type: 'BlockDfg', block: BlockID }
-  | { type: 'DefUse', center: ValueDt }
-  ;
+  | { type: "Empty" }
+  | { type: "Focus" }
+  | { type: "CallGraph" }
+  | { type: "ItemReference"; item: GlobalID }
+  | { type: "FuncCfg"; func: GlobalID }
+  | { type: "FuncDom"; func: GlobalID }
+  | { type: "BlockDfg"; block: BlockID }
+  | { type: "DefUse"; center: ValueDt };
 
 export type FlowGraphProps = {
   graph: FlowGraphType;
   compId: string;
 };
 
-function getFocusBlock(module: ModuleCache, focus: FocusSourceInfo): BlockID | null {
-  let id = focus.id;
-  if (!id)
-    return null;
+function getFocusBlock(
+  module: ModuleCache,
+  focus: FocusSourceInfo,
+): BlockID | null {
+  const id = focus.id;
+  if (!id) return null;
   switch (id.type) {
-    case "Block": return id.value;
+    case "Block":
+      return id.value;
     case "Inst": {
-      let inst = module.loadInst(id.value);
-      if (!inst)
-        return null;
+      const inst = module.loadInst(id.value);
+      if (!inst) return null;
       return inst.parent;
     }
-    default: return null;
+    default:
+      return null;
   }
 }
 
 async function renderGraph(
-  module: ModuleCache, graph: FlowGraphType, focus: FocusSourceInfo | null,
+  module: ModuleCache,
+  graph: FlowGraphType,
+  focus: FocusSourceInfo | null,
 ): Promise<[FlowNode[], FlowEdge[]]> {
   try {
     switch (graph.type) {
-      case 'Empty': return [noFuncSelectNodes, []];
-      case 'CallGraph': {
+      case "Empty":
+        return [noFuncSelectNodes, []];
+      case "CallGraph": {
         return [todoNodes("CallGraph"), []];
       }
-      case 'ItemReference': {
+      case "ItemReference": {
         return [todoNodes("ItemReference"), []];
       }
-      case 'Focus': {
-        if (!focus)
-          return [noFuncSelectNodes, []];
-        let scopeFunc = focus?.scopeId;
+      case "Focus": {
+        if (!focus) return [noFuncSelectNodes, []];
+        const scopeFunc = focus?.scopeId;
         if (!scopeFunc) {
           return [todoNodes("Focus CallGraph"), []];
         }
-        let focusBB = getFocusBlock(module, focus);
-        return await renderCfgOfFunc(module, scopeFunc, focusBB) ?? [[], []];
+        const focusBB = getFocusBlock(module, focus);
+        return (await renderCfgOfFunc(module, scopeFunc, focusBB)) ?? [[], []];
       }
-      case 'FuncCfg': {
+      case "FuncCfg": {
         const focusBB = focus ? getFocusBlock(module, focus) : null;
-        return await renderCfgOfFunc(module, graph.func, focusBB) ?? [[], []];
+        return (await renderCfgOfFunc(module, graph.func, focusBB)) ?? [[], []];
       }
-      case 'FuncDom':
+      case "FuncDom": {
         const focusBB = focus ? getFocusBlock(module, focus) : null;
-        return await renderDominanceOfFunc(module, focusBB, graph.func) ?? [[], []];
-      case 'BlockDfg':
+        return (
+          (await renderDominanceOfFunc(module, focusBB, graph.func)) ?? [[], []]
+        );
+      }
+      case "BlockDfg":
         return await renderDfgInsideBlock(graph.block, module);
-      case 'DefUse':
+      case "DefUse":
         return await renderDfgFromCentered(graph.center, module);
       default:
         return [noFuncSelectNodes, []];
@@ -151,13 +164,18 @@ export function FlowGraph({ graph, compId }: FlowGraphProps) {
     setEdges(edges);
   }, [irStore, graph]);
 
-  useEffect(() => { renderGraphFunc(); }, [renderGraphFunc]);
+  useEffect(() => {
+    renderGraphFunc();
+  }, [renderGraphFunc]);
 
   return (
     <ReactFlowProvider>
       <ReactFlow
-        nodeTypes={FlowNodeTypes} edgeTypes={FlowEdgeTypes} fitView
-        nodes={nodes} edges={edges}
+        nodeTypes={FlowNodeTypes}
+        edgeTypes={FlowEdgeTypes}
+        fitView
+        nodes={nodes}
+        edges={edges}
       >
         <Background id={`${compId}-background`} />
         <Controls />
@@ -173,18 +191,4 @@ export default function FlowViewer({ fgGraph }: FlowViewerProps) {
   return (
     <FlowGraph graph={fgGraph ?? { type: "Focus" }} compId="flowViewerBottom" />
   );
-}
-
-function getGraphLabel(graph: FlowGraphType): string {
-  switch (graph.type) {
-    case 'Empty': return 'Empty';
-    case 'Focus': return 'Focus';
-    case 'CallGraph': return 'Call Graph';
-    case 'ItemReference': return 'Item Reference';
-    case 'FuncCfg': return 'Function CFG';
-    case 'FuncDom': return 'Function Dominance';
-    case 'BlockDfg': return 'Block DFG';
-    case 'DefUse': return 'Def-Use Graph';
-    default: return 'Graph';
-  }
 }

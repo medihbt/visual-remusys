@@ -2,7 +2,7 @@ use crate::{ValueDt, fmt_jserr};
 use remusys_ir::ir::{inst::CallInst, *};
 use serde::{Serialize, Serializer};
 use smol_str::{ToSmolStr, format_smolstr};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::JsError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -117,6 +117,7 @@ struct BlockDfgBuilder<'ir> {
     node_map: HashMap<DfgNodeID, (usize, usize)>,
     inst_list: Vec<InstInfo>,
     edges: Vec<DfgEdge>,
+    edge_set: HashSet<UseID>,
 }
 
 impl<'ir> BlockDfgBuilder<'ir> {
@@ -143,6 +144,7 @@ impl<'ir> BlockDfgBuilder<'ir> {
             node_map: HashMap::new(),
             inst_list,
             edges: Vec::new(),
+            edge_set: HashSet::new(),
         }
     }
 
@@ -198,6 +200,9 @@ impl<'ir> BlockDfgBuilder<'ir> {
         Ok(section_id)
     }
     fn add_edge_with_nodes(&mut self, edge: UseID) -> Result<(), JsError> {
+        if self.edge_set.contains(&edge) {
+            return Ok(());
+        }
         let useobj = edge.deref_ir(self.allocs);
         let Some(user) = useobj.user.get() else {
             return fmt_jserr!("internal error: dangling edge {edge:?} has no user");
@@ -220,6 +225,7 @@ impl<'ir> BlockDfgBuilder<'ir> {
                 None
             },
         });
+        self.edge_set.insert(edge);
         Ok(())
     }
     fn push_internal_inst(&mut self, InstInfo { id, is_split }: InstInfo) {
