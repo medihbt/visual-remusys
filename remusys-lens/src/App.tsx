@@ -16,18 +16,18 @@ import {
 import type { FocusEvent, NavEvent } from "./guide-view/types";
 import TopMenu from "./TopMenu";
 import { sourceTrackableToString } from "./ir/ir";
+import { useFlowStore } from "./flow/flow-stat";
 
 // 将导航事件的处理逻辑抽出为独立函数，避免组件内堆积业务代码
 function handleNavEvent(
   event: NavEvent | null,
-  setGraph: React.Dispatch<React.SetStateAction<FlowGraphType | undefined>>,
   clear: () => void,
+  setGraph: (graph: FlowGraphType) => void,
 ) {
   if (!event) return;
   switch (event.type) {
     case "Focus": {
       handleNavFocus(event);
-      setGraph(undefined);
       break;
     }
     case "ExpandOne":
@@ -66,7 +66,7 @@ function handleNavEvent(
     }
     default:
       console.warn("GuideView: unknown NavEvent type", event);
-      setGraph(undefined);
+      setGraph({ type: "Empty" });
       break;
   }
   clear();
@@ -129,14 +129,12 @@ export function MainPage() {
   const irError = useIRStore(selectIRError);
   const [navEvent, setNavEvent] = React.useState<NavEvent | null>(null);
   const sourceText = useIRStore((s) => s.sourceText);
-  const [graph, setGraph] = React.useState<FlowGraphType | undefined>(
-    undefined,
-  );
+  const setGraph = useFlowStore((s) => s.setGraphType);
 
   React.useEffect(() => {
     setNavEvent(null);
-    setGraph(undefined);
-  }, [moduleId]);
+    setGraph({ type: "Focus" });
+  }, [moduleId, setGraph]);
 
   let guideViewStatus: string;
   if (irStatus === "error") {
@@ -180,7 +178,7 @@ export function MainPage() {
                     onNavigate={setNavEvent}
                     incomingNavEvent={navEvent}
                     onConsumeNavEvent={(ev) =>
-                      handleNavEvent(ev, setGraph, () => setNavEvent(null))
+                      handleNavEvent(ev, () => setNavEvent(null), setGraph)
                     }
                   />
                 ) : (
@@ -197,7 +195,7 @@ export function MainPage() {
 
         <ReflexElement flex={60}>
           <React.Suspense fallback={flowReplaceText}>
-            <FlowViewer fgGraph={graph} />
+            <FlowViewer />
           </React.Suspense>
         </ReflexElement>
       </ReflexContainer>

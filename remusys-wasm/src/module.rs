@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::cfg::DomTreeDt;
 use crate::dfg::BlockDfgDt;
-use crate::{console_log, dto::*, fmt_jserr, mapping::*};
+use crate::{dto::*, fmt_jserr, mapping::*};
 
 pub struct ModuleInfo {
     pub module: Box<Module>,
@@ -167,7 +167,6 @@ impl ModuleInfo {
                     ser.fmt_global(id)?;
                 }
                 GlobalObj::Func(_) => {
-                    console_log!("formatting header of function with id {id:?} for overview");
                     let range = ser.fmt_func_header(FuncID::raw_from(id))?;
                     func_pos.push((id, range));
                 }

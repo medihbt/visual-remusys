@@ -135,10 +135,6 @@ export const GuideView: React.FC<GuideViewProps> = ({
     );
   }, [storage]);
 
-  useEffect(() => {
-    console.debug("GuideView: nodes updated count=", nodes?.length);
-  }, [nodes]);
-
   // 5. 事件处理 (直接作用于 storage)
   const handleToggle = useCallback(
     (ref: SourceTrackable) => {

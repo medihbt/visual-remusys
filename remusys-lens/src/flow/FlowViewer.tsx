@@ -9,6 +9,8 @@ import { renderCfgOfFunc } from "./graphs/cfg";
 import { renderDominanceOfFunc } from "./graphs/dominance";
 import { renderDfgFromCentered, renderDfgInsideBlock } from "./graphs/dfg";
 import "./FlowViewer.css";
+import { useFlowStore } from "./flow-stat";
+import { FlowToast } from "./components/Toast";
 
 const noFuncSelectNodes: FlowNode[] = [
   {
@@ -69,7 +71,6 @@ export type FlowGraphType =
   | { type: "DefUse"; center: ValueDt };
 
 export type FlowGraphProps = {
-  graph: FlowGraphType;
   compId: string;
 };
 
@@ -147,10 +148,11 @@ async function renderGraph(
   }
 }
 
-export function FlowGraph({ graph, compId }: FlowGraphProps) {
+export function FlowGraph({ compId }: FlowGraphProps) {
   const [nodes, setNodes] = React.useState<FlowNode[]>([]);
   const [edges, setEdges] = React.useState<FlowEdge[]>([]);
   const irStore = useIRStore();
+  const graph = useFlowStore((store) => store.graphType);
 
   const renderGraphFunc = useCallback(async () => {
     if (!irStore.module) {
@@ -184,11 +186,11 @@ export function FlowGraph({ graph, compId }: FlowGraphProps) {
   );
 }
 
-export type FlowViewerProps = {
-  fgGraph?: FlowGraphType;
-};
-export default function FlowViewer({ fgGraph }: FlowViewerProps) {
+export default function FlowViewer() {
   return (
-    <FlowGraph graph={fgGraph ?? { type: "Focus" }} compId="flowViewerBottom" />
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      <FlowGraph compId="flowViewerBottom" />
+      <FlowToast />
+    </div>
   );
 }

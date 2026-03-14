@@ -1,76 +1,39 @@
 import * as Viz from "@viz-js/viz";
 import type { GraphvizJSON, DrawOps, Point } from "../graphviz-object";
-import type { FlowGroupNodeData, FlowNode } from "../components/Node";
+import type { FlowElemNode, FlowNode, FlowGroupNode } from "../components/Node";
 import type { FlowEdge } from "../components/Edge";
+import type { BlockDfgSectionKind } from "../../ir/ir";
 
-export async function layoutFlow(
-  nodes: FlowNode[],
+const viz = await Viz.instance();
+export type FlowGraph = [FlowNode[], FlowEdge[]];
+export type AsyncFlowGraph = Promise<FlowGraph>;
+
+// Simple flow nodes, without any sub-graphs.
+export function layoutSimpleFlow(
+  nodes: FlowElemNode[],
   edges: FlowEdge[],
-): Promise<[FlowNode[], FlowEdge[]]> {
-  const viz = await Viz.instance();
-  const { graph, clusterNameToGroupId } = getDotObject(nodes, edges);
-  // Draw ops (_draw_/_ldraw_/_hdraw_) are only available in "json" output.
-  const jsonObj = viz.renderJSON(graph, { format: "json" }) as GraphvizJSON;
-  return decodeLayout(nodes, edges, jsonObj, clusterNameToGroupId);
-}
-type GroupNode = Extract<FlowNode, { type: "groupNode" }>;
-type PlainNode = Extract<FlowNode, { type: "flowNode" }>;
-
-function isGroupNode(node: FlowNode): node is GroupNode {
-  return node.type === "groupNode";
+): FlowGraph {
+  const dot = getDotFromSimple(nodes, edges);
+  const json = viz.renderJSON(dot, {
+    engine: "dot",
+    format: "json0",
+  }) as GraphvizJSON;
+  return decodeSimpleLayout(nodes, edges, json);
 }
 
-function getDotObject(
-  nodes: FlowNode[],
-  edges: FlowEdge[],
-): { graph: Viz.Graph; clusterNameToGroupId: Map<string, string> } {
-  const plainNodes = nodes.filter(
-    (node): node is PlainNode => !isGroupNode(node),
-  );
-  const groupNodes = nodes.filter(isGroupNode);
+function getDotFromSimple(nodes: FlowElemNode[], edges: FlowEdge[]): Viz.Graph {
   const nodeSizePixels = {
-    width: (plainNodes[0]?.width ?? 120) * 1.25, // add some padding to the default node size
-    height: (plainNodes[0]?.height ?? 45) * 1.25,
+    width: (nodes[0]?.width ?? 120) * 1.25,
+    height: (nodes[0]?.height ?? 45) * 1.25,
   };
   const nodeSizeInches = {
     width: nodeSizePixels.width / 96, // assuming 96 DPI
     height: nodeSizePixels.height / 96,
   };
 
-  const clusterNameToGroupId = new Map<string, string>();
-  const assignedNodes = new Set<string>();
-  const subgraphs: Viz.Subgraph[] = [];
-
-  for (const [index, groupNode] of groupNodes.entries()) {
-    const childIds =
-      (groupNode.data as FlowGroupNodeData | undefined)?.childIds ?? [];
-    const memberIds = childIds.filter((id) =>
-      plainNodes.some((node) => node.id === id),
-    );
-    if (!memberIds.length) continue;
-
-    for (const id of memberIds) assignedNodes.add(id);
-
-    const clusterName = `cluster_${index}_${groupNode.id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
-    clusterNameToGroupId.set(clusterName, groupNode.id);
-    subgraphs.push({
-      name: clusterName,
-      graphAttributes: {
-        label: groupNode.data?.label ?? groupNode.id,
-        color: "#c7c7c7",
-        style: "rounded",
-        penwidth: 1,
-        remusys_group_id: groupNode.id,
-      },
-      nodes: memberIds.map((name) => ({ name })),
-    });
-  }
-
   const graph: Viz.Graph = {
     directed: true,
-    nodes: plainNodes
-      .filter((node) => !assignedNodes.has(node.id))
-      .map((node) => ({ name: node.id })),
+    nodes: nodes.map((node) => ({ name: node.id })),
     edges: edges.map((e) => ({
       attributes: {
         remusys_edge_id: e.id,
@@ -79,8 +42,6 @@ function getDotObject(
       tail: e.source,
       head: e.target,
     })),
-    // Request smooth cubic splines from Graphviz. 'spline' asks for
-    // interpolated cubic Bézier splines (smoother than polylines).
     graphAttributes: {
       splines: "spline",
     },
@@ -91,9 +52,8 @@ function getDotObject(
       fixedsize: true,
     },
     edgeAttributes: { penwidth: "1" },
-    subgraphs,
   };
-  return { graph, clusterNameToGroupId };
+  return graph;
 }
 
 type Pt = { x: number; y: number };
@@ -112,7 +72,6 @@ function pointsToPolylinePath(pts: Pt[], close = false): string {
   if (close) segs.push("Z");
   return segs.join(" ");
 }
-
 function catmullRomToBeziers(pts: Pt[]): string[] {
   const beziers: string[] = [];
   if (pts.length < 2) return beziers;
@@ -127,15 +86,13 @@ function catmullRomToBeziers(pts: Pt[]): string[] {
   }
   return beziers;
 }
-
 function bsplinePointsToPath(points: Point[], toPt: (p: Point) => Pt): string {
   if (!points.length) return "";
   const pts = points.map(toPt);
   const beziers = catmullRomToBeziers(pts);
   if (!beziers.length) return pointsToPolylinePath(pts, false);
-  return `M ${pts[0].x} ${pts[0].y} ${beziers.join(" ")}`;
+  else return `M ${pts[0].x} ${pts[0].y} ${beziers.join(" ")}`;
 }
-
 function ellipseToPath(rect: [number, number, number, number]): string {
   const [x1, y1, x2, y2] = rect;
   const cx = (x1 + x2) / 2;
@@ -239,63 +196,10 @@ function parseEdgePosToPath(
   return bsplinePointsToPath(points, toPt);
 }
 
-function collectBoundsFromDrawOps(
-  ops?: DrawOps,
-  transform?: (p: Point) => Point,
-): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  if (!ops || !ops.length) return null;
-
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-
-  const pushPoint = (point: Point) => {
-    const pt = transform ? transform(point) : point;
-    minX = Math.min(minX, pt[0]);
-    minY = Math.min(minY, pt[1]);
-    maxX = Math.max(maxX, pt[0]);
-    maxY = Math.max(maxY, pt[1]);
-  };
-
-  for (const op of ops) {
-    switch (op.op) {
-      case "b":
-      case "B":
-      case "L":
-      case "p":
-      case "P": {
-        for (const point of op.points ?? []) pushPoint(point);
-        break;
-      }
-      case "e":
-      case "E": {
-        if (!op.rect) break;
-        pushPoint([op.rect[0], op.rect[1]]);
-        pushPoint([op.rect[2], op.rect[3]]);
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  if (
-    !Number.isFinite(minX) ||
-    !Number.isFinite(minY) ||
-    !Number.isFinite(maxX) ||
-    !Number.isFinite(maxY)
-  ) {
-    return null;
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-function decodeLayout(
+function decodeSimpleLayout(
   nodes: FlowNode[],
   edges: FlowEdge[],
   json: GraphvizJSON,
-  clusterNameToGroupId: Map<string, string>,
 ): [FlowNode[], FlowEdge[]] {
   const edgeMap: Map<string, FlowEdge> = new Map(edges.map((e) => [e.id, e]));
   const nodeMap: Map<string, FlowNode> = new Map(nodes.map((n) => [n.id, n]));
@@ -317,18 +221,6 @@ function decodeLayout(
   for (const obj of json.objects) {
     if (typeof obj._gvid === "number") {
       gvidToName.set(obj._gvid, obj.name);
-    }
-
-    const groupId = clusterNameToGroupId.get(obj.name);
-    if (groupId) {
-      const groupNode = nodeMap.get(groupId);
-      const bounds = collectBoundsFromDrawOps(obj._draw_, transform);
-      if (groupNode && bounds) {
-        groupNode.position = { x: bounds.minX, y: bounds.minY };
-        groupNode.width = bounds.maxX - bounds.minX;
-        groupNode.height = bounds.maxY - bounds.minY;
-      }
-      continue;
     }
 
     const nodeName = obj.name;
@@ -422,4 +314,264 @@ function decodeLayout(
     };
   }
   return [nodes, edges];
+}
+
+export type FlowSection = {
+  id: string;
+  label: string;
+  /** BlockDfgSectionKind = "Income" | "Outcome" | "Pure" | "Effect" */
+  kind: BlockDfgSectionKind;
+  nodes: FlowElemNode[];
+  internalEdges: FlowEdge[];
+};
+export type SectionFlowGraph = {
+  sections: FlowSection[];
+  crossEdges: FlowEdge[];
+};
+
+function buildSectionDotGraph(
+  graph: SectionFlowGraph,
+  sampleNode?: FlowElemNode,
+): Viz.Graph {
+  // 节点尺寸计算（复用现有逻辑）
+  const nodeSizePixels = {
+    width: (sampleNode?.width ?? 120) * 1.25,
+    height: (sampleNode?.height ?? 45) * 1.25,
+  };
+  const nodeSizeInches = {
+    width: nodeSizePixels.width / 96, // 96 DPI 假设
+    height: nodeSizePixels.height / 96,
+  };
+
+  const dotGraph: Viz.Graph = {
+    directed: true,
+    strict: false, // 允许重边
+    graphAttributes: {
+      rankdir: "TB", // 纵向布局
+      splines: "spline", // 平滑曲线
+    },
+    nodeAttributes: {
+      shape: "box",
+      width: nodeSizeInches.width,
+      height: nodeSizeInches.height,
+      fixedsize: true,
+    },
+    edgeAttributes: {
+      penwidth: "1",
+    },
+    subgraphs: [],
+    edges: [],
+  };
+
+  // 为每个节创建集群子图
+  let rank = 10;
+  for (const section of graph.sections) {
+    const subgraph: Viz.Subgraph = {
+      name: `cluster_${section.id}`, // "cluster_" 前缀启用集群布局
+      nodes: section.nodes.map((node) => ({ name: node.id })),
+      edges: [],
+    };
+
+    // 设置节特定的布局约束
+    const graphAttrs: Viz.Attributes = {};
+    if (section.kind === "Income") {
+      graphAttrs.rank = "source";
+    } else if (section.kind === "Outcome") {
+      graphAttrs.rank = "sink";
+    } else {
+      graphAttrs.rank = rank;
+      rank += 10; // 为 Pure 和 Effect 分配中间的 rank 值，保持它们在 Income 和 Outcome 之间
+    }
+    if (Object.keys(graphAttrs).length > 0) {
+      subgraph.graphAttributes = graphAttrs;
+    }
+
+    // 转换内部边
+    subgraph.edges = section.internalEdges.map((edge) => ({
+      tail: edge.source,
+      head: edge.target,
+      attributes: {
+        remusys_edge_id: edge.id,
+        label: edge.data?.label ?? edge.id,
+      },
+    }));
+
+    // Effect 节：添加隐形边强制垂直顺序
+    if (section.kind === "Effect" && section.nodes.length > 1) {
+      for (let i = 0; i < section.nodes.length - 1; i++) {
+        const nodeA = section.nodes[i];
+        const nodeB = section.nodes[i + 1];
+        subgraph.edges!.push({
+          tail: nodeA.id,
+          head: nodeB.id,
+          attributes: {
+            style: "invis",
+            constraint: true,
+            remusys_edge_id: `invis_${section.id}_${i}`,
+          },
+        });
+      }
+    }
+
+    dotGraph.subgraphs!.push(subgraph);
+  }
+
+  // 添加跨节边（顶级边）
+  dotGraph.edges = graph.crossEdges.map((edge) => ({
+    tail: edge.source,
+    head: edge.target,
+    attributes: {
+      remusys_edge_id: edge.id,
+      label: edge.data?.label ?? edge.id,
+    },
+  }));
+
+  return dotGraph;
+}
+
+export function layoutSectionFlow(graph: SectionFlowGraph): FlowGraph {
+  // 收集所有节点和边
+  const allNodes: FlowElemNode[] = [];
+  const allEdges: FlowEdge[] = [];
+
+  for (const section of graph.sections) {
+    allNodes.push(...section.nodes);
+    allEdges.push(...section.internalEdges);
+  }
+  allEdges.push(...graph.crossEdges);
+
+  // 构建 Graphviz 图结构
+  const dotGraph = buildSectionDotGraph(graph, allNodes[0]);
+
+  // 调用 Graphviz 布局引擎
+  const json = viz.renderJSON(dotGraph, {
+    engine: "dot",
+    format: "json0",
+  }) as GraphvizJSON;
+
+  // 解码布局结果（得到绝对坐标的节点）
+  const [flatNodes, edges] = decodeSimpleLayout(allNodes, allEdges, json);
+
+  // 转换为 React Flow 分组结构
+  return createGroupedLayout(graph, flatNodes, edges);
+}
+
+function createGroupedLayout(
+  graph: SectionFlowGraph,
+  flatNodes: FlowNode[],
+  edges: FlowEdge[],
+): FlowGraph {
+  const resultNodes: FlowNode[] = [];
+  const nodeMap = new Map<string, FlowNode>();
+
+  // 将平面节点存入映射表
+  for (const node of flatNodes) {
+    nodeMap.set(node.id, node);
+  }
+
+  // 为每个 section 创建 group 节点并处理子节点
+  for (const section of graph.sections) {
+    // 收集 section 内所有节点
+    const sectionNodes: FlowNode[] = [];
+    for (const node of section.nodes) {
+      const flowNode = nodeMap.get(node.id);
+      if (flowNode && flowNode.type === "elemNode") {
+        sectionNodes.push(flowNode);
+      }
+    }
+
+    if (sectionNodes.length === 0) {
+      continue;
+    }
+
+    // 计算 section 的边界框（基于节点的绝对位置）
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const node of sectionNodes) {
+      const { x, y } = node.position;
+      const width = node.width ?? 120;
+      const height = node.height ?? 45;
+
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    }
+
+    // 添加一些内边距
+    const padding = 20;
+    const groupX = minX - padding;
+    const groupY = minY - padding;
+    const groupWidth = maxX - minX + 2 * padding;
+    const groupHeight = maxY - minY + 2 * padding;
+
+    // 创建 group 节点
+    const groupNode: FlowGroupNode = {
+      id: `group_${section.id}`,
+      type: "groupNode",
+      position: { x: groupX, y: groupY },
+      width: groupWidth,
+      height: groupHeight,
+      data: {
+        label: section.label,
+        focused: false,
+        irObjID: null,
+        bgColor: getGroupNodeBgColor(section.kind),
+      },
+      style: {
+        border: "1px dashed #ccc",
+        borderRadius: 3,
+        backgroundColor: getGroupNodeBgColor(section.kind),
+      },
+      draggable: section.kind === "Pure",
+    };
+
+    // 首先添加 group 节点（父节点必须在子节点之前）
+    resultNodes.push(groupNode);
+
+    // 然后添加子节点，转换为相对位置并设置 parentId
+    for (const node of sectionNodes) {
+      if (node.type === "elemNode") {
+        const relativeNode: FlowNode = {
+          ...node,
+          position: {
+            x: node.position.x - groupX,
+            y: node.position.y - groupY,
+          },
+          parentId: groupNode.id,
+          extent: "parent",
+          draggable: section.kind === "Pure",
+        };
+        resultNodes.push(relativeNode);
+      }
+    }
+  }
+
+  // 添加不属于任何 section 的节点（如果有的话）
+  for (const node of flatNodes) {
+    if (!resultNodes.some((n) => n.id === node.id)) {
+      resultNodes.push(node);
+    }
+  }
+
+  return [resultNodes, edges];
+}
+
+function getGroupNodeBgColor(kind: BlockDfgSectionKind): string {
+  // Group nodes use minimal styling, but we provide subtle color hints
+  switch (kind) {
+    case "Income":
+      return "rgba(144, 238, 144, 0.1)";
+    case "Outcome":
+      return "rgba(240, 128, 128, 0.1)";
+    case "Pure":
+      return "rgba(255, 255, 224, 0.1)";
+    case "Effect":
+      return "rgba(173, 216, 230, 0.1)";
+    default:
+      return "transparent";
+  }
 }

@@ -608,9 +608,7 @@ export const useIRStore = create<IRStore>()(
 
       focusOn(id: ir.SourceTrackable) {
         try {
-          console.debug("ir-state: focusOn called with", id);
           const info = focusSource(get() as IRStore, id);
-          console.debug("ir-state: focusSource returned", info);
           set(
             (state) => {
               if (!info) {
@@ -627,12 +625,8 @@ export const useIRStore = create<IRStore>()(
             false,
             "ir/focus-on",
           );
-          console.debug(
-            "ir-state: focus state set, new focusedId=",
-            get().focusedId,
-          );
         } catch (error) {
-          console.warn("ir-state: focusOn error", error);
+          console.error("ir-state: focusOn error", error);
           set(
             (state) => {
               state.error = normalizeError(error);
@@ -727,29 +721,15 @@ export function focusSource(
     switch (id.type) {
       case "Module":
         scopeId = null;
-        console.debug("ir-state.focusSource: module-level focus");
         break;
       case "Global": {
         const g = module.loadGlobal(id.value);
-        console.debug(
-          "ir-state.focusSource: Global id=",
-          id.value,
-          "loaded=",
-          !!g,
-        );
-        if (g && g.typeid === "Func" && g.blocks) {
-          scopeId = id.value;
-          console.debug(
-            "ir-state.focusSource: scopeId set to global func",
-            scopeId,
-          );
-        }
+        if (g && g.typeid === "Func" && g.blocks) scopeId = id.value;
         break;
       }
       default: {
         // If we still don't have a scope, ask the module for the owning function (for blocks/insts/uses)
         const owning = module.getOwningFunc(id);
-        console.debug("ir-state.focusSource: owning func=", owning);
         if (owning) scopeId = owning;
         break;
       }
@@ -763,12 +743,6 @@ export function focusSource(
         sourceText = f.source;
       }
     }
-    console.debug(
-      "ir-state.focusSource: chosen sourceText length=",
-      sourceText?.length ?? 0,
-      "scopeId=",
-      scopeId,
-    );
 
     // Determine highlight location. Prefer precise item source_loc; for focusing a function
     // itself, aggregate its blocks' ranges if possible.
@@ -799,10 +773,6 @@ export function focusSource(
         }
         if (begin.line !== Number.MAX_SAFE_INTEGER) {
           highlightLoc = { begin, end };
-          console.debug(
-            "ir-state.focusSource: function bounding highlightLoc=",
-            highlightLoc,
-          );
         }
       }
     }
@@ -811,10 +781,6 @@ export function focusSource(
     if (!highlightLoc) {
       const loc = module.findSourceLoc(id as ir.SourceTrackable);
       highlightLoc = loc ?? DEFAULT_RANGE;
-      console.debug(
-        "ir-state.focusSource: fallback highlightLoc=",
-        highlightLoc,
-      );
     }
 
     const res: FocusSourceInfo = {
@@ -823,7 +789,6 @@ export function focusSource(
       sourceText,
       highlightLoc,
     };
-    console.debug("ir-state.focusSource: returning", res);
     return res;
   } catch (e) {
     console.warn("ir-state.focusSource: error", e);

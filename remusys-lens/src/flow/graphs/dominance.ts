@@ -6,8 +6,8 @@ import {
 } from "../../ir/ir";
 import { ModuleCache } from "../../ir/ir-state";
 import type { FlowEdge } from "../components/Edge";
-import type { FlowNode } from "../components/Node";
-import { layoutFlow } from "./layout";
+import type { FlowElemNode, FlowNode } from "../components/Node";
+import { layoutSimpleFlow } from "./layout";
 
 export async function renderDominatiorTree(
   module: ModuleCache,
@@ -18,10 +18,11 @@ export async function renderDominatiorTree(
     throw new Error("No module loaded");
   }
   const { nodes, edges } = dominance;
-  const flowNodes: FlowNode[] = nodes.map((node, idx) => {
+  const flowNodes: FlowElemNode[] = nodes.map((node, idx) => {
     const block = module.loadBlock(node);
     return {
       id: node,
+      type: "elemNode",
       position: { x: 0, y: idx * 100 },
       data: {
         label: block?.name || node,
@@ -29,7 +30,6 @@ export async function renderDominatiorTree(
         irObjID: { type: "Block", value: node },
         bgColor: "#ffffff",
       },
-      type: "flowNode",
     };
   });
   const flowEdges: FlowEdge[] = edges.map((edge) => ({
@@ -44,7 +44,7 @@ export async function renderDominatiorTree(
       label: "",
     },
   }));
-  return await layoutFlow(flowNodes, flowEdges);
+  return layoutSimpleFlow(flowNodes, flowEdges);
 }
 
 export async function renderDominanceOfFunc(

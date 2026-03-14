@@ -1,8 +1,8 @@
 import type { BlockID, GlobalID, JTKind, JumpTargetID } from "../../ir/ir";
 import { ModuleCache } from "../../ir/ir-state";
 import type { FlowEdge } from "../components/Edge";
-import type { FlowNode } from "../components/Node";
-import { layoutFlow } from "./layout";
+import type { FlowElemNode, FlowNode } from "../components/Node";
+import { layoutSimpleFlow } from "./layout";
 
 export type CfgNodeKind = "Entry" | "Control" | "Exit";
 export type CfgNode = {
@@ -75,7 +75,7 @@ export async function renderCfgToFlow(
   edges: CfgEdge[],
   focusBlock: BlockID | null,
 ): Promise<[FlowNode[], FlowEdge[]]> {
-  const flowNodes: FlowNode[] = nodes.map((n) => {
+  const flowNodes: FlowElemNode[] = nodes.map((n) => {
     let bgColor: string;
     switch (n.kind) {
       case "Entry":
@@ -119,7 +119,7 @@ export async function renderCfgToFlow(
       },
     };
   });
-  return await layoutFlow(flowNodes, flowEdges);
+  return layoutSimpleFlow(flowNodes, flowEdges);
 }
 
 export async function renderCfgOfFunc(

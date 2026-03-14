@@ -286,21 +286,10 @@ export class TreeNodeStorage {
       "childCount=",
       node.childIds.length,
     );
-    return node.childIds.map((childId) => {
-      console.debug(
-        "TreeNodeStorage.expandChildren: expanding child",
-        ir.sourceTrackableToString(childId),
-      );
-      return this.expand(childId, module);
-    });
+    return node.childIds.map((childId) => this.expand(childId, module));
   }
   dfsExpand(id: ir.SourceTrackable, module: ModuleCache): GuideTreeNode[] {
-    console.debug(
-      "TreeNodeStorage.dfsExpand: start",
-      ir.sourceTrackableToString(id),
-    );
     const result: GuideTreeNode[] = [];
-
     const expandRec = (ref: ir.SourceTrackable) => {
       const node = this.expand(ref, module);
       result.push(node);
@@ -308,9 +297,7 @@ export class TreeNodeStorage {
         expandRec(childId);
       }
     };
-
     expandRec(id);
-    console.debug("TreeNodeStorage.dfsExpand: result count", result.length);
     return result;
   }
   collapse(id: ir.SourceTrackable): void {
