@@ -2,7 +2,7 @@ import { Background, Controls, ReactFlow } from "@xyflow/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import React, { useCallback, useEffect } from "react";
 import { ModuleCache, useIRStore, type FocusSourceInfo } from "../ir/ir-state";
-import type { BlockID, GlobalID, ValueDt } from "../ir/ir";
+import type { BlockID, GlobalID, JumpTargetID, ValueDt } from "../ir/ir";
 import { FlowEdgeTypes, type FlowEdge } from "./components/Edge";
 import { FlowNodeTypes, type FlowNode } from "./components/Node";
 import { renderCfgOfFunc } from "./graphs/cfg";
@@ -92,6 +92,11 @@ function getFocusBlock(
       return null;
   }
 }
+function getFocusEdge(focus: FocusSourceInfo | null): JumpTargetID | null {
+  const id = focus?.id;
+  if (!id || id.type !== "JumpTarget") return null;
+  return id.value;
+}
 
 async function renderGraph(
   module: ModuleCache,
@@ -115,11 +120,23 @@ async function renderGraph(
           return [todoNodes("Focus CallGraph"), []];
         }
         const focusBB = getFocusBlock(module, focus);
-        return (await renderCfgOfFunc(module, scopeFunc, focusBB)) ?? [[], []];
+        const focusEdge = getFocusEdge(focus);
+        return (
+          (await renderCfgOfFunc(module, scopeFunc, focusBB, focusEdge)) ?? [
+            [],
+            [],
+          ]
+        );
       }
       case "FuncCfg": {
         const focusBB = focus ? getFocusBlock(module, focus) : null;
-        return (await renderCfgOfFunc(module, graph.func, focusBB)) ?? [[], []];
+        const focusEdge = getFocusEdge(focus);
+        return (
+          (await renderCfgOfFunc(module, graph.func, focusBB, focusEdge)) ?? [
+            [],
+            [],
+          ]
+        );
       }
       case "FuncDom": {
         const focusBB = focus ? getFocusBlock(module, focus) : null;
@@ -166,6 +183,23 @@ export function FlowGraph({ compId }: FlowGraphProps) {
     setEdges(edges);
   }, [irStore, graph]);
 
+  const onNodeDoubleClick = useCallback(
+    (event: React.MouseEvent, node: FlowNode) => {
+      event.preventDefault();
+      if (!node.data?.irObjID) return;
+      irStore.focusOn(node.data.irObjID);
+    },
+    [irStore],
+  );
+  const onEdgeDoubleClick = useCallback(
+    (event: React.MouseEvent, edge: FlowEdge) => {
+      event.preventDefault();
+      if (!edge.data?.irObjID) return;
+      irStore.focusOn(edge.data.irObjID);
+    },
+    [irStore],
+  );
+
   useEffect(() => {
     renderGraphFunc();
   }, [renderGraphFunc]);
@@ -178,6 +212,8 @@ export function FlowGraph({ compId }: FlowGraphProps) {
         fitView
         nodes={nodes}
         edges={edges}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
       >
         <Background id={`${compId}-background`} />
         <Controls />

@@ -8,6 +8,7 @@ export type FlowEdgeData = {
   labelY: number;
   label: string;
   strokeColor?: string;
+  isFocused?: boolean;
   irObjID?: SourceTrackable;
 };
 
@@ -20,6 +21,7 @@ export const FlowEdgeComp: React.FC<FlowEdgeProps> = (props) => {
 
   const id = props.id;
   const strokeColor = props.data?.strokeColor ?? "#222";
+  const strokeWidth = props.data?.isFocused ? 1.5 : 1;
 
   const mainElems = mainPaths.map((path, idx) => (
     <path
@@ -27,7 +29,7 @@ export const FlowEdgeComp: React.FC<FlowEdgeProps> = (props) => {
       id={`${id}-main-${idx}`}
       d={path}
       stroke={strokeColor}
-      strokeWidth={1}
+      strokeWidth={strokeWidth}
       fill="none"
     />
   ));
@@ -37,7 +39,7 @@ export const FlowEdgeComp: React.FC<FlowEdgeProps> = (props) => {
       id={`${id}-arrow-${idx}`}
       d={path}
       stroke={strokeColor}
-      strokeWidth={1}
+      strokeWidth={strokeWidth}
       fill={strokeColor}
     />
   ));
@@ -48,7 +50,8 @@ export const FlowEdgeComp: React.FC<FlowEdgeProps> = (props) => {
       textAnchor="middle"
       dominantBaseline="central"
       fontSize={9}
-      fill="#222"
+      fontWeight={props.data?.isFocused ? "bold" : "normal"}
+      fill={strokeColor}
     >
       {props.label}
     </text>

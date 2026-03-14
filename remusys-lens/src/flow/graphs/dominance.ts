@@ -23,6 +23,8 @@ export async function renderDominatiorTree(
     return {
       id: node,
       type: "elemNode",
+      width: 120,
+      height: 45,
       position: { x: 0, y: idx * 100 },
       data: {
         label: block?.name || node,

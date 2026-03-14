@@ -74,6 +74,7 @@ export async function renderCfgToFlow(
   nodes: CfgNode[],
   edges: CfgEdge[],
   focusBlock: BlockID | null,
+  focusEdge: JumpTargetID | null,
 ): Promise<[FlowNode[], FlowEdge[]]> {
   const flowNodes: FlowElemNode[] = nodes.map((n) => {
     let bgColor: string;
@@ -103,6 +104,7 @@ export async function renderCfgToFlow(
     };
   });
   const flowEdges: FlowEdge[] = edges.map((e) => {
+    const isSelected = e.id === focusEdge;
     return {
       id: e.id as string,
       source: e.from as string,
@@ -116,6 +118,7 @@ export async function renderCfgToFlow(
         label: e.kind,
         irObjID: { type: "JumpTarget", value: e.id },
         strokeColor: getStrokeColor(e.kind),
+        isFocused: isSelected,
       },
     };
   });
@@ -126,9 +129,10 @@ export async function renderCfgOfFunc(
   module: ModuleCache,
   func: GlobalID,
   focusBlock: BlockID | null,
+  focusEdge: JumpTargetID | null,
 ): Promise<[FlowNode[], FlowEdge[]] | null> {
   const cfg = makeCfg(module, func);
   if (!cfg) return null;
   const [nodes, edges] = cfg;
-  return await renderCfgToFlow(nodes, edges, focusBlock);
+  return await renderCfgToFlow(nodes, edges, focusBlock, focusEdge);
 }

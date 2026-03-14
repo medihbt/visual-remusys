@@ -85,6 +85,22 @@ export class IDCast {
       IDCast.asJumpTarget(id)
     );
   }
+  static asSourceTrackable(id: string): SourceTrackable | null {
+    if (IDCast.asGlobal(id)) {
+      return { type: "Global", value: id };
+    } else if (IDCast.asBlock(id)) {
+      return { type: "Block", value: id };
+    } else if (IDCast.asInst(id)) {
+      return { type: "Inst", value: id };
+    } else if (IDCast.asExpr(id)) {
+      return { type: "Expr", value: id };
+    } else if (IDCast.asUse(id)) {
+      return { type: "Use", value: id };
+    } else if (IDCast.asJumpTarget(id)) {
+      return { type: "JumpTarget", value: id };
+    }
+    return null;
+  }
   static asBlockDfgNodeID(id: string): id is BlockDfgNodeID {
     return (
       IDCast.asInst(id) ||

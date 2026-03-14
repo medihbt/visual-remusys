@@ -1,11 +1,13 @@
 import type { FlowNode, FlowElemNode } from "../components/Node";
 import { type FlowEdge } from "../components/Edge";
-import type {
-  BlockDfgSectionKind,
-  BlockID,
-  UseID,
-  UseKind,
-  ValueDt,
+import {
+  IDCast,
+  type BlockDfgSectionKind,
+  type BlockID,
+  type SourceTrackable,
+  type UseID,
+  type UseKind,
+  type ValueDt,
 } from "../../ir/ir";
 import type { ModuleCache } from "../../ir/ir-state";
 import {
@@ -178,19 +180,24 @@ export async function renderDfgInsideBlock(
 
   // 转换每个 section
   for (const sectionDt of sectionsDt) {
-    const flowNodes: FlowElemNode[] = sectionDt.nodes.map((nodeDt) => ({
-      id: nodeDt.id,
-      position: { x: 0, y: 0 },
-      width: 120,
-      height: 45,
-      type: "elemNode",
-      data: {
-        label: module.valueGetName(nodeDt.value) ?? nodeDt.id,
-        focused: false,
-        irObjID: null,
-        bgColor: getSectionBgColor(sectionDt.kind),
-      },
-    }));
+    const flowNodes: FlowElemNode[] = sectionDt.nodes.map((nodeDt) => {
+      const irObjID: SourceTrackable | null = IDCast.asSourceTrackable(
+        nodeDt.id,
+      );
+      return {
+        id: nodeDt.id,
+        position: { x: 0, y: 0 },
+        width: 120,
+        height: 45,
+        type: "elemNode",
+        data: {
+          label: module.valueGetName(nodeDt.value) ?? nodeDt.id,
+          focused: false,
+          irObjID,
+          bgColor: getSectionBgColor(sectionDt.kind),
+        },
+      };
+    });
 
     const flowSection: FlowSection = {
       id: sectionDt.id.toString(),
