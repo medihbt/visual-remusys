@@ -502,3 +502,24 @@ export function irMakeBlockDfg(
 ): BlockDfgDt {
   return Api.make_block_dfg(module_id, block_id);
 }
+export type CallNodeRole = "Root" | "Live" | "Indirect" | "Unreachable";
+
+export type CallGraphNode = {
+  id: GlobalID;
+  role: CallNodeRole;
+};
+
+export type CallGraphEdge = {
+  id: UseID;
+  caller: GlobalID;
+  callee: GlobalID;
+};
+
+export type CallGraphDt = {
+  nodes: CallGraphNode[];
+  edges: CallGraphEdge[];
+};
+
+export function irMakeCallGraph(module_id: ModuleID): CallGraphDt {
+  return Api.make_call_graph(module_id);
+}

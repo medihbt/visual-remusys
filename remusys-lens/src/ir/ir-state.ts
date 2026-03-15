@@ -353,6 +353,9 @@ export class ModuleCache {
   makeBlockDfg(blockID: ir.BlockID): ir.BlockDfgDt {
     return ir.irMakeBlockDfg(this.moduleId, blockID);
   }
+  makeCallGraph(): ir.CallGraphDt {
+    return ir.irMakeCallGraph(this.moduleId);
+  }
 }
 
 export type IRStoreStatus = "idle" | "ready" | "error";

@@ -11,6 +11,7 @@ import { renderDfgFromCentered, renderDfgInsideBlock } from "./graphs/dfg";
 import "./FlowViewer.css";
 import { useFlowStore } from "./flow-stat";
 import { FlowToast } from "./components/Toast";
+import { renderCallGraph } from "./graphs/callgraph";
 
 const noFuncSelectNodes: FlowNode[] = [
   {
@@ -108,7 +109,13 @@ async function renderGraph(
       case "Empty":
         return [noFuncSelectNodes, []];
       case "CallGraph": {
-        return [todoNodes("CallGraph"), []];
+        return (
+          (await renderCallGraph(
+            module,
+            focus?.id.type === "Global" ? focus.id.value : null,
+            focus?.id.type === "Use" ? focus.id.value : null,
+          )) ?? [[], []]
+        );
       }
       case "ItemReference": {
         return [todoNodes("ItemReference"), []];
@@ -117,7 +124,13 @@ async function renderGraph(
         if (!focus) return [noFuncSelectNodes, []];
         const scopeFunc = focus?.scopeId;
         if (!scopeFunc) {
-          return [todoNodes("Focus CallGraph"), []];
+          return (
+            (await renderCallGraph(
+              module,
+              focus?.id.type === "Global" ? focus.id.value : null,
+              focus?.id.type === "Use" ? focus.id.value : null,
+            )) ?? [[], []]
+          );
         }
         const focusBB = getFocusBlock(module, focus);
         const focusEdge = getFocusEdge(focus);

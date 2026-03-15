@@ -37,14 +37,18 @@ function renderTree(
   // 转换 Nodes (只转换展开的节点)
   const rfNodes: GuideRFNode[] = nodes
     .filter((n) => n.expanded)
-    .map((n) => ({
-      id: sourceTrackableToString(n.treeNode.selfId),
-      type: "guideNode",
-      position: { x: 0, y: 0 },
-      data: n,
-      width: 220,
-      height: Math.max(52 + n.children.length * 41, 52 + 41), // 简单高度估算
-    }));
+    .map((n) => {
+      let height = Math.max(52 + n.children.length * 41, 52 + 41);
+      height = Math.min(height, 300); // 设置最大高度，避免过高的节点
+      return {
+        id: sourceTrackableToString(n.treeNode.selfId),
+        type: "guideNode",
+        position: { x: 0, y: 0 },
+        data: n,
+        width: 220,
+        height, // 简单高度估算
+      };
+    });
   // 转换 Edges
   const rfEdges: GuideRFEdge[] = edges.map((e) => ({
     id: e.id,

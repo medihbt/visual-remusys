@@ -26,6 +26,7 @@ export function FlowToast() {
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
+        fontSize: "12px",
       }}
     >
       <div style={{ flex: 1 }}>

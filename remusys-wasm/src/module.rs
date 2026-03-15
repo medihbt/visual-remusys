@@ -8,9 +8,12 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-use crate::cfg::DomTreeDt;
-use crate::dfg::BlockDfgDt;
-use crate::{dto::*, fmt_jserr, mapping::*};
+use crate::{
+    dto::*,
+    fmt_jserr,
+    graphs::{call_graph::CallGraphDt, cfg::DomTreeDt, dfg::BlockDfgDt},
+    mapping::*,
+};
 
 pub struct ModuleInfo {
     pub module: Box<Module>,
@@ -590,5 +593,8 @@ impl ModuleInfo {
             return fmt_jserr!("block id {block_id:?} is freed or disposed");
         }
         BlockDfgDt::new(&self.module, block_id)
+    }
+    pub fn make_call_graph(&self) -> Result<CallGraphDt, JsError> {
+        Ok(CallGraphDt::new(&self.module))
     }
 }
