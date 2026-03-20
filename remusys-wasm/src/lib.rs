@@ -18,6 +18,7 @@ mod graphs {
 mod dto;
 mod mapping;
 mod module;
+mod rename;
 
 #[macro_export]
 macro_rules! fmt_jserr {
@@ -115,13 +116,12 @@ impl Api {
         serialize_to_js(&id).map_err(JsError::from)
     }
 
-    pub fn rename(id: &str, poolid: JsValue, new_name: &str) -> Result<(), JsError> {
-        let _pool_id: SourceTrackable = serde_wasm_bindgen::from_value(poolid.clone())?;
-        module::ModuleInfo::with_module_mut(id, |info| {
-            info.invalidate_overview();
-            Ok(())
-        })?;
-        todo!("Renaming not implemented yet. poolid: {poolid:?}, new_name: {new_name}");
+    pub fn rename(id: &str, poolid: JsValue, new_name: &str) -> Result<JsValue, JsError> {
+        let pool_id: SourceTrackable = serde_wasm_bindgen::from_value(poolid.clone())?;
+        ModuleInfo::with_module_mut(id, |info| match info.rename(pool_id, new_name) {
+            Ok(delta) => serialize_to_js(&delta).map_err(JsError::from),
+            Err(e) => Err(JsError::from(e)),
+        })
     }
 
     pub fn update_func_src(id: &str, func_id: &str) -> Result<JsValue, JsError> {

@@ -199,6 +199,28 @@ impl From<PoolAllocatedID> for SourceTrackable {
     }
 }
 
+impl SourceTrackable {
+    pub fn is_alive(&self, module: &Module) -> bool {
+        let allocs = &module.allocs;
+        match self {
+            SourceTrackable::Global(id) => id.is_alive(allocs),
+            SourceTrackable::Block(id) => id.is_alive(allocs),
+            SourceTrackable::Inst(id) => id.is_alive(allocs),
+            SourceTrackable::Expr(id) => id.is_alive(allocs),
+            SourceTrackable::Use(id) => id.is_alive(allocs),
+            SourceTrackable::JumpTarget(id) => id.is_alive(allocs),
+            SourceTrackable::FuncArg(func_id, idx) => {
+                if let Some(func_id) = FuncID::try_from_global(allocs, *func_id) {
+                    let args = func_id.args(allocs);
+                    (*idx as usize) < args.len()
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 // Section: serialize-only DTOs
 
 #[derive(Debug, Clone, Serialize)]

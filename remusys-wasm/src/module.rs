@@ -14,6 +14,9 @@ use crate::{
     graphs::{call_graph::CallGraphDt, cfg::DomTreeDt, dfg::BlockDfgDt},
     mapping::*,
 };
+pub mod source_buf;
+pub mod source_tree;
+pub mod source_tree_builder;
 
 pub struct ModuleInfo {
     pub module: Box<Module>,
@@ -25,6 +28,10 @@ pub struct OverviewInfo {
     pub src: SmolStr,
     pub global_map: HashMap<GlobalID, IRSourceRange>,
     pub lines: Box<[usize]>,
+}
+
+pub struct FuncInfo {
+    pub id: FuncID,
 }
 
 impl OverviewInfo {

@@ -212,8 +212,10 @@ impl<'ir> BlockDfgBuilder<'ir> {
 
         let user_id = DfgNodeID::from(user);
         let operand_id = Self::value_to_id(Some(edge), value)?;
-        let user_section_id = self.add_node_in_section(user_id, user.into_ir(), DfgSection::OUTCOME_SECTION_ID)?;
-        let operand_section_id = self.add_node_in_section(operand_id, value, DfgSection::INCOME_SECTION_ID)?;
+        let user_section_id =
+            self.add_node_in_section(user_id, user.into_ir(), DfgSection::OUTCOME_SECTION_ID)?;
+        let operand_section_id =
+            self.add_node_in_section(operand_id, value, DfgSection::INCOME_SECTION_ID)?;
         self.edges.push(DfgEdge {
             id: edge,
             kind,
