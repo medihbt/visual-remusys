@@ -66,7 +66,7 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::{
     source_buf::IRSourceBuf,
-    source_tree_builder::{IRTreeBuildRes, IRTreeBuilder, IRTreeNodeBuildRes},
+    source_tree_builder::{IRTreeBuildRes, IRTreeBuilder},
 };
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -233,9 +233,10 @@ impl IRTree {
         let mut res = Self::new_empty();
         let root = IRTreeBuilder::new(module, names, &mut res).build_overview()?;
         res.overview_id = root;
+        res.build_depth(root, 0);
         Ok(res)
     }
-    fn build_dep(&mut self, root: IRTreeNodeID, root_dep: u32) {
+    fn build_depth(&mut self, root: IRTreeNodeID, root_dep: u32) {
         let alloc = &mut self.alloc;
         let mut stk: SmallVec<[_; 16]> = smallvec![(root, root_dep)];
         while let Some((node_id, depth)) = stk.pop() {
@@ -259,6 +260,7 @@ impl IRTree {
             .free_if(|_, _, inner| !live_set.get(inner.get_order()));
     }
 
+    #[allow(unused)]
     fn update_line_map(&mut self, mut focus: IRTreeNodeID, line_delta: isize) {
         if line_delta == 0 {
             return;
@@ -290,6 +292,7 @@ impl IRTree {
         }
     }
 
+    #[allow(unused)]
     fn find_editable(&self, mut node_id: IRTreeNodeID) -> Option<IRTreeNodeID> {
         loop {
             let node = node_id.deref_alloc(&self.alloc);
