@@ -9,6 +9,8 @@ export type FlowEdgeData = {
   label: string;
   strokeColor?: string;
   isFocused?: boolean;
+  dashPattern?: `${number} ${number}` | "none";
+  dashAndLine?: boolean;
   irObjID?: SourceTrackable;
 };
 
@@ -31,8 +33,21 @@ export const FlowEdgeComp: React.FC<FlowEdgeProps> = (props) => {
       stroke={strokeColor}
       strokeWidth={strokeWidth}
       fill="none"
+      strokeDasharray={props.data?.dashPattern ?? "none"}
     />
   ));
+  if (props.data?.dashAndLine && props.data?.dashPattern && props.data.dashPattern !== "none") {
+    mainElems.push(...mainPaths.map((path, idx) => (
+      <path
+        key={`d-${idx}`}
+        id={`${id}-dash-${idx}`}
+        d={path}
+        stroke={strokeColor}
+        strokeWidth={strokeWidth * 0.7}
+        fill="none"
+      />
+    )));
+  }
   const arrowElems = arrowPaths.map((path, idx) => (
     <path
       key={`a-${idx}`}

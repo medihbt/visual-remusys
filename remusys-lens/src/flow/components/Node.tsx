@@ -8,6 +8,7 @@ import type { ReactElement, ReactNode } from "react";
 export type FlowNodeBaseData = {
   label: string | ReactElement;
   focused: boolean;
+  dashed?: boolean;
   irObjID: SourceTrackable | null;
   bgColor: string;
 };

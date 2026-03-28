@@ -463,6 +463,30 @@ export function irCloneFunction(
 
 export type IRValueObjectDt = GlobalObjDt | BlockDt | InstDt;
 
+export type CfgNodeKind = "Entry" | "Control" | "Exit";
+export type CfgEdgeClass = "SelfRing" | "Tree" | "Back" | "Forward" | "Cross" | "Unreachable";
+export type CfgNode = {
+  id: BlockID;
+  label: string;
+  kind: CfgNodeKind;
+};
+export type CfgEdge = {
+  id: JumpTargetID;
+  from: BlockID;
+  to: BlockID;
+  kind: JTKind;
+  is_critical: boolean;
+  edge_class: CfgEdgeClass;
+};
+export type FuncCfgDt = {
+  nodes: CfgNode[];
+  edges: CfgEdge[];
+};
+export function irMakeCfg(module_id: string, func: GlobalID): FuncCfgDt {
+  return Api.make_func_cfg(module_id, func);
+}
+
+
 export type DomTreeDt = {
   nodes: BlockID[];
   edges: [BlockID, BlockID][];

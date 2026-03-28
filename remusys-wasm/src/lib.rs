@@ -193,6 +193,11 @@ impl Api {
         })
     }
 
+    pub fn make_func_cfg(module_id: &str, func_id: &str) -> Result<JsValue, JsError> {
+        let func_id = GlobalID::from_str(func_id).map_err(|s| JsError::new(&s))?;
+        let cfg = ModuleInfo::with_module(module_id, |m| m.make_func_cfg(func_id))?;
+        serialize_to_js(&cfg).map_err(JsError::from)
+    }
     pub fn make_dominator_tree(module_id: &str, func_id: &str) -> Result<JsValue, JsError> {
         let func_id = GlobalID::from_str(func_id).map_err(|s| JsError::new(&s))?;
         let dt = ModuleInfo::with_module(module_id, |m| m.make_dominator_tree(func_id))?;
