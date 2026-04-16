@@ -521,6 +521,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "remusys-wasm-b2"
+version = "0.2.0"
+dependencies = [
+ "mtb-entity-slab",
+ "regex",
+ "remusys-ir",
+ "remusys-ir-parser",
+ "remusys-lang",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "smallvec",
+ "smol_str",
+ "thiserror",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
