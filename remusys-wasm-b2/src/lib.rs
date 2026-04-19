@@ -3,7 +3,7 @@ mod module;
 mod tree;
 
 pub use self::{
-    dto::{call_graph::CallGraphDt, cfg::FuncCfgDt, dfg::BlockDfg, dom::DomTreeDt},
+    dto::{call_graph::CallGraphDt, cfg::FuncCfgDt, dfg::BlockDfg, dom::DomTreeDt, *},
     module::{
         ModuleInfo, MonacoSrcPos, MonacoSrcRange, RevLocalNameMap, rename,
         source_buf::{SourceBuf, SourceLine},

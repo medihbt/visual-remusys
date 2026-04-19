@@ -57,12 +57,16 @@ use std::{
 };
 
 use mtb_entity_slab::{EntityAlloc, GenIndex, IEntityAllocID, IPoliciedID, IndexedID, entity_id};
-use remusys_ir::ir::{BlockID, FuncID, GlobalID, InstID, JumpTargetID, UseID};
+use remusys_ir::ir::{
+    BlockID, FuncID, GlobalID, GlobalObj, ISubGlobalID, ISubInst, ISubInstID, InstID, InstObj,
+    JumpTargetID, UseID,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
+use smol_str::{SmolStr, format_smolstr};
 use wasm_bindgen::JsError;
 
-use crate::fmt_jserr;
+use crate::{IRDagNodeClass, ModuleInfo, dto::ValueDt, fmt_jserr};
 
 pub mod builder;
 pub mod testing;
@@ -108,6 +112,77 @@ pub enum IRTreeObjID {
     /// 全量更新整个基本块的源码图谱树太重了. 这个结点只负责基本块开头的名称这一行, 和基本块的指令结点
     /// 平级, 这样就可以在不更新指令结点的情况下更新基本块开头的名称这一行了.
     BlockIdent(BlockID),
+}
+
+impl IRTreeObjID {
+    pub fn get_name(&self, ir: &ModuleInfo) -> Result<SmolStr, JsError> {
+        let name = match self {
+            IRTreeObjID::Module => format_smolstr!("Module {}", ir.module().name),
+            IRTreeObjID::Global(global_id) => {
+                format_smolstr!("@{}", global_id.get_name(ir.module()))
+            }
+            IRTreeObjID::FuncArg(global_id, idx) => {
+                ValueDt::FuncArg(*global_id, *idx).get_name(ir.module(), ir.names())?
+            }
+            IRTreeObjID::Block(block_id) => {
+                ValueDt::Block(*block_id).get_name(ir.module(), ir.names())?
+            }
+            IRTreeObjID::Inst(inst_id) => {
+                ValueDt::Inst(*inst_id).get_name(ir.module(), ir.names())?
+            }
+            IRTreeObjID::Use(use_id) => {
+                format_smolstr!("Use {}", use_id.get_kind(ir.module()))
+            }
+            IRTreeObjID::JumpTarget(jt_id) => {
+                format_smolstr!("JumpTarget {}", jt_id.get_kind(ir.module()))
+            }
+            IRTreeObjID::FuncHeader(global_id) => {
+                format_smolstr!("FuncHeader @{}", global_id.get_name(ir.module()))
+            }
+            IRTreeObjID::BlockIdent(block_id) => {
+                let block_name = ValueDt::Block(*block_id).get_name(ir.module(), ir.names())?;
+                format_smolstr!("BlockIdent %{}", block_name)
+            }
+        };
+        Ok(name)
+    }
+
+    pub fn get_class(&self, ir: &ModuleInfo) -> Result<IRDagNodeClass, JsError> {
+        let res = match self {
+            IRTreeObjID::Module => IRDagNodeClass::Module,
+            IRTreeObjID::FuncArg(..) => IRDagNodeClass::FuncArg,
+            IRTreeObjID::Block(_) => IRDagNodeClass::Block,
+            IRTreeObjID::Use(_) => IRDagNodeClass::Use,
+            IRTreeObjID::JumpTarget(_) => IRDagNodeClass::JumpTarget,
+
+            // nodes that are treated as their parents.
+            IRTreeObjID::FuncHeader(_) => IRDagNodeClass::Func,
+            IRTreeObjID::BlockIdent(_) => IRDagNodeClass::Block,
+
+            // nodes that have more than one cases.
+            IRTreeObjID::Global(global_id) => {
+                let Some(global_obj) = global_id.try_deref_ir(ir.module()) else {
+                    return fmt_jserr!(Err "global {global_id:?} does not exist");
+                };
+                match global_obj {
+                    GlobalObj::Func(f) if f.body.is_none() => IRDagNodeClass::ExternFunc,
+                    GlobalObj::Func(_) => IRDagNodeClass::Func,
+                    GlobalObj::Var(_) => IRDagNodeClass::GlobalVar,
+                }
+            }
+            IRTreeObjID::Inst(inst_id) => {
+                let Some(inst) = inst_id.try_deref_ir(ir.module()) else {
+                    return fmt_jserr!(Err "inst {inst_id:?} does not exist");
+                };
+                match inst {
+                    InstObj::Phi(_) => IRDagNodeClass::PhiInst,
+                    inst if inst.is_terminator() => IRDagNodeClass::TerminatorInst,
+                    _ => IRDagNodeClass::NormalInst,
+                }
+            }
+        };
+        Ok(res)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash)]
@@ -487,3 +562,22 @@ pub type IRDagNodePath = [IRTreeNodeID];
 
 pub type IRObjPathBuf = SmallVec<[IRTreeObjID; 4]>;
 pub type IRObjPath = [IRTreeObjID];
+
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub struct GuideTreePath {
+    node_path: IRDagNodePathBuf,
+    source_range: Vec<SourceRangeIndex>,
+}
+
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl GuideTreePath {
+    pub fn new_root(ir: &ModuleInfo) -> Self {
+        let tree = ir.ir_tree();
+        let root = tree.root;
+        let source_range = root.deref(tree).pos_delta.clone();
+        Self {
+            node_path: smallvec::smallvec![root],
+            source_range: vec![source_range],
+        }
+    }
+}

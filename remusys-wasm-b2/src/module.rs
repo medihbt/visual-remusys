@@ -2,14 +2,17 @@ use std::{collections::HashMap, ops::Range, str::FromStr};
 
 use remusys_ir::{
     SymbolStr,
-    ir::{BlockID, FuncArgID, FuncID, GlobalID, IRNameMap, ISubGlobalID, Module},
+    ir::{
+        BlockID, FuncArgID, FuncID, GlobalID, IRNameMap, ISubGlobalID, ISubInst, ISubInstID,
+        InstID, Module, UserID,
+    },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 use crate::{
     CallGraphDt, DomTreeDt, IRDagBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
-    dto::{IRDagNodeDt, cfg::FuncCfgDt, dfg::BlockDfg},
+    dto::{IRTreeNodeDt, cfg::FuncCfgDt, dfg::BlockDfg},
     fmt_jserr,
     rename::IRRename,
 };
@@ -97,7 +100,7 @@ impl ModuleInfo {
     pub fn module(&self) -> &Module {
         &self.module
     }
-    pub fn ir_dag(&self) -> &IRTree {
+    pub fn ir_tree(&self) -> &IRTree {
         &self.ir_tree
     }
     pub fn names(&self) -> &IRNameMap {
@@ -162,6 +165,79 @@ impl ModuleInfo {
             None => fmt_jserr!(Err "global id does not refer to a function: {global_id:?}"),
         }
     }
+    pub fn path_vec_of_tree_object(&self, obj: IRTreeObjID) -> Result<Vec<IRTreeObjID>, JsError> {
+        fn path_of_block(module: &Module, block_id: BlockID) -> Result<Vec<IRTreeObjID>, JsError> {
+            let Some(block) = block_id.try_deref_ir(module) else {
+                return fmt_jserr!(Err "invalid block id: {block_id:?}");
+            };
+            let Some(func_id) = block.get_parent_func() else {
+                return fmt_jserr!(Err "block does not belong to any function: {block_id:?}");
+            };
+            Ok(vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(func_id.raw_into()),
+                IRTreeObjID::Block(block_id),
+            ])
+        }
+        fn path_of_inst(module: &Module, inst_id: InstID) -> Result<Vec<IRTreeObjID>, JsError> {
+            let Some(inst) = inst_id.try_deref_ir(module) else {
+                return fmt_jserr!(Err "invalid instruction id: {inst_id:?}");
+            };
+            let Some(block) = inst.get_parent() else {
+                return fmt_jserr!(Err "instruction does not belong to any block: {inst_id:?}");
+            };
+            let mut res = path_of_block(module, block)?;
+            res.push(IRTreeObjID::Inst(inst_id));
+            Ok(res)
+        }
+        let path = match obj {
+            IRTreeObjID::Module => vec![IRTreeObjID::Module],
+            IRTreeObjID::Global(global_id) => {
+                vec![IRTreeObjID::Module, IRTreeObjID::Global(global_id)]
+            }
+            IRTreeObjID::FuncArg(global_id, idx) => vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(global_id),
+                IRTreeObjID::FuncHeader(global_id),
+                IRTreeObjID::FuncArg(global_id, idx),
+            ],
+            IRTreeObjID::Block(block_id) => path_of_block(&self.module, block_id)?,
+            IRTreeObjID::Inst(inst_id) => path_of_inst(&self.module, inst_id)?,
+            IRTreeObjID::BlockIdent(block_id) => {
+                let mut res = path_of_block(&self.module, block_id)?;
+                res.push(IRTreeObjID::BlockIdent(block_id));
+                res
+            }
+            IRTreeObjID::FuncHeader(global_id) => vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(global_id),
+                IRTreeObjID::FuncHeader(global_id),
+            ],
+            IRTreeObjID::JumpTarget(jt_id) => {
+                let Some(jt) = jt_id.try_deref_ir(&self.module) else {
+                    return fmt_jserr!(Err "invalid jump target id: {jt_id:?}");
+                };
+                let Some(inst) = jt.terminator.get() else {
+                    return fmt_jserr!(Err "jump target does not belong to any instruction: {jt_id:?}");
+                };
+                let mut res = path_of_inst(&self.module, inst)?;
+                res.push(IRTreeObjID::JumpTarget(jt_id));
+                res
+            }
+            IRTreeObjID::Use(use_id) => {
+                let Some(use_obj) = use_id.try_deref_ir(&self.module) else {
+                    return fmt_jserr!(Err "invalid use id: {use_id:?}");
+                };
+                let Some(UserID::Inst(inst)) = use_obj.user.get() else {
+                    return Ok(vec![]);
+                };
+                let mut res = path_of_inst(&self.module, inst)?;
+                res.push(IRTreeObjID::Use(use_id));
+                res
+            }
+        };
+        Ok(path)
+    }
 }
 
 #[wasm_bindgen]
@@ -188,6 +264,25 @@ impl ModuleInfo {
         Self::serialize(&obj_path.as_slice())
     }
 
+    /// IR Tree 加载器: 给定一个 IR 对象路径, 返回对应树结点的信息（包括它代表的 IR 对象、它的类型、它在源代码中的范围等）.
+    pub fn path_get_node(&self, path: JsValue) -> Result<JsValue, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        let node_path = self.ir_tree.resolve_path(&obj_path)?;
+        let Some(node_id) = node_path.last() else {
+            return fmt_jserr!(Err "object path cannot be empty");
+        };
+        let node_obj = node_id.obj(&self.ir_tree);
+        let byte_range = self.ir_tree.get_path_source_range(&node_path)?;
+        let monaco_range = self.source.byte_range_to_monaco(byte_range)?;
+        let node = IRTreeNodeDt {
+            obj: node_obj,
+            kind: node_obj.get_class(self)?,
+            label: node_obj.get_name(self)?,
+            src_range: monaco_range,
+        };
+        Self::serialize(&node)
+    }
+
     /// IR Tree 加载器: 通过结点的 path 加载对应树结点的子结点.
     pub fn ir_tree_get_children(&self, path: JsValue) -> Result<JsValue, JsError> {
         let obj_path: IRObjPathBuf = Self::deserialize(path)?;
@@ -205,9 +300,12 @@ impl ModuleInfo {
             let child_range = self
                 .source
                 .byte_range_to_monaco(child_pos_begin..child_pos_end)?;
-            res.push(IRDagNodeDt {
-                obj: child_id.obj(&self.ir_tree),
+            let obj_id = child_id.obj(&self.ir_tree);
+            res.push(IRTreeNodeDt {
+                kind: obj_id.get_class(self)?,
+                obj: obj_id,
                 src_range: child_range,
+                label: obj_id.get_name(self)?,
             });
         }
         Self::serialize(&res)
@@ -222,6 +320,31 @@ impl ModuleInfo {
         IRRename::new(self, last)
             .rename(new_name)
             .and_then(|x| Self::serialize(&x))
+    }
+
+    /// 通过一个 IR 对象 ID 获取它在 IR Tree 中的路径.
+    ///
+    /// 对于可能出现一对多映射的情况, 会返回一个错误.
+    pub fn path_of_tree_object(&self, object_id: JsValue) -> Result<JsValue, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let path = self.path_vec_of_tree_object(object)?;
+        if path.is_empty() {
+            return fmt_jserr!(Err "object is not part of the IR tree: {object:?}");
+        }
+        Self::serialize(&path)
+    }
+
+    /// 通过一个 IR 对象 ID 获取它的作用域
+    pub fn get_object_scope(&self, object_id: JsValue) -> Result<String, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let path = self.path_vec_of_tree_object(object)?;
+        if path.len() < 2 {
+            return fmt_jserr!(Err "object does not have a scope: {object:?}");
+        }
+        let IRTreeObjID::Global(scope) = path[1] else {
+            return fmt_jserr!(Err "object does not have a global scope: {object:?}");
+        };
+        Ok(scope.to_strid().to_string())
     }
 }
 

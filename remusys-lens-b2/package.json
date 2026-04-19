@@ -1,0 +1,42 @@
+{
+  "name": "remusys-lens-b2",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "wasm-build": "cd ../remusys-wasm-b2 && wasm-pack build --target bundler --out-dir pkg && wasm-pack pack && cd -",
+    "wasm-build-dev": "cd ../remusys-wasm-b2 && wasm-pack -v build --dev --target bundler --out-dir pkg && wasm-pack pack && cd -",
+    "wasm-refresh": "npm install ../remusys-wasm-b2/pkg/remusys-wasm-b2-0.2.0.tgz"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.9",
+    "@monaco-editor/react": "^4.7.0",
+    "@types/dagre": "^0.7.54",
+    "@viz-js/viz": "^3.24.0",
+    "@xyflow/react": "^12.10.1",
+    "dagre": "^0.8.5",
+    "immer": "^11.1.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remusys-wasm-b2": "file:../remusys-wasm-b2/pkg/remusys-wasm-b2-0.2.0.tgz",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.58.0",
+    "vite": "^8.0.4"
+  }
+}
