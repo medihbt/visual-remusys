@@ -1,5 +1,5 @@
 import React from "react";
-import type { IRTreeNodeClass } from "../ir/types";
+import type { IRTreeNodeClass } from "remusys-wasm-b2";
 
 type TypeIconStyle = {
     color: string;

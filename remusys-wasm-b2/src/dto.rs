@@ -192,7 +192,7 @@ impl ValueDt {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum IRDagNodeClass {
+pub enum IRTreeNodeClass {
     Module,
     GlobalVar,
     ExternFunc,
@@ -209,7 +209,7 @@ pub enum IRDagNodeClass {
 #[derive(Debug, Clone, Serialize)]
 pub struct IRTreeNodeDt {
     pub obj: IRTreeObjID,
-    pub kind: IRDagNodeClass,
+    pub kind: IRTreeNodeClass,
     pub label: SmolStr,
     pub src_range: MonacoSrcRange,
 }

@@ -64,11 +64,17 @@ use remusys_ir::ir::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 use smol_str::{SmolStr, format_smolstr};
-use wasm_bindgen::JsError;
+use wasm_bindgen::{JsError, prelude::wasm_bindgen};
 
-use crate::{IRDagNodeClass, ModuleInfo, dto::ValueDt, fmt_jserr};
+use crate::{
+    IRTreeNodeClass, IRTreeNodeDt, ModuleInfo,
+    dto::ValueDt,
+    fmt_jserr, js_assert,
+    types::{JsIRObjPath, JsIRTreeNodeDt, JsIRTreeNodes, JsTreeObjID},
+};
 
 pub mod builder;
+pub mod expand;
 pub mod testing;
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -147,17 +153,17 @@ impl IRTreeObjID {
         Ok(name)
     }
 
-    pub fn get_class(&self, ir: &ModuleInfo) -> Result<IRDagNodeClass, JsError> {
+    pub fn get_class(&self, ir: &ModuleInfo) -> Result<IRTreeNodeClass, JsError> {
         let res = match self {
-            IRTreeObjID::Module => IRDagNodeClass::Module,
-            IRTreeObjID::FuncArg(..) => IRDagNodeClass::FuncArg,
-            IRTreeObjID::Block(_) => IRDagNodeClass::Block,
-            IRTreeObjID::Use(_) => IRDagNodeClass::Use,
-            IRTreeObjID::JumpTarget(_) => IRDagNodeClass::JumpTarget,
+            IRTreeObjID::Module => IRTreeNodeClass::Module,
+            IRTreeObjID::FuncArg(..) => IRTreeNodeClass::FuncArg,
+            IRTreeObjID::Block(_) => IRTreeNodeClass::Block,
+            IRTreeObjID::Use(_) => IRTreeNodeClass::Use,
+            IRTreeObjID::JumpTarget(_) => IRTreeNodeClass::JumpTarget,
 
             // nodes that are treated as their parents.
-            IRTreeObjID::FuncHeader(_) => IRDagNodeClass::Func,
-            IRTreeObjID::BlockIdent(_) => IRDagNodeClass::Block,
+            IRTreeObjID::FuncHeader(_) => IRTreeNodeClass::Func,
+            IRTreeObjID::BlockIdent(_) => IRTreeNodeClass::Block,
 
             // nodes that have more than one cases.
             IRTreeObjID::Global(global_id) => {
@@ -165,9 +171,9 @@ impl IRTreeObjID {
                     return fmt_jserr!(Err "global {global_id:?} does not exist");
                 };
                 match global_obj {
-                    GlobalObj::Func(f) if f.body.is_none() => IRDagNodeClass::ExternFunc,
-                    GlobalObj::Func(_) => IRDagNodeClass::Func,
-                    GlobalObj::Var(_) => IRDagNodeClass::GlobalVar,
+                    GlobalObj::Func(f) if f.body.is_none() => IRTreeNodeClass::ExternFunc,
+                    GlobalObj::Func(_) => IRTreeNodeClass::Func,
+                    GlobalObj::Var(_) => IRTreeNodeClass::GlobalVar,
                 }
             }
             IRTreeObjID::Inst(inst_id) => {
@@ -175,9 +181,9 @@ impl IRTreeObjID {
                     return fmt_jserr!(Err "inst {inst_id:?} does not exist");
                 };
                 match inst {
-                    InstObj::Phi(_) => IRDagNodeClass::PhiInst,
-                    inst if inst.is_terminator() => IRDagNodeClass::TerminatorInst,
-                    _ => IRDagNodeClass::NormalInst,
+                    InstObj::Phi(_) => IRTreeNodeClass::PhiInst,
+                    inst if inst.is_terminator() => IRTreeNodeClass::TerminatorInst,
+                    _ => IRTreeNodeClass::NormalInst,
                 }
             }
         };
@@ -338,6 +344,11 @@ impl IRTreeNodeID {
         self.deref_alloc_mut(&mut tree.alloc)
     }
 
+    pub fn to_strid(self) -> SmolStr {
+        let index = self.into_gen_index().0.get();
+        format_smolstr!("n{:x}", index)
+    }
+
     pub fn obj(self, tree: &IRTree) -> IRTreeObjID {
         self.deref(tree).obj
     }
@@ -461,8 +472,8 @@ impl IRTree {
         output
     }
 
-    pub fn resolve_path(&self, obj_path: &IRObjPath) -> Result<IRDagNodePathBuf, JsError> {
-        let mut node_path = IRDagNodePathBuf::with_capacity(obj_path.len());
+    pub fn resolve_path(&self, obj_path: &IRObjPath) -> Result<IRTreeNodePathBuf, JsError> {
+        let mut node_path = IRTreeNodePathBuf::with_capacity(obj_path.len());
         let mut current_node_id = self.root;
         let mut obj_path_iter = obj_path.iter();
         if obj_path_iter.next() != Some(&IRTreeObjID::Module) {
@@ -485,7 +496,7 @@ impl IRTree {
     }
 
     /// 根据源代码位置找到对应的结点路径. 结点路径是从根结点到目标结点的 ID 序列. 如果没有找到, 返回 Err.
-    pub fn locate_node_path(&self, mut pos: SourcePosIndex) -> Result<IRDagNodePathBuf, JsError> {
+    pub fn locate_node_path(&self, mut pos: SourcePosIndex) -> Result<IRTreeNodePathBuf, JsError> {
         let mut path = smallvec::smallvec![self.root];
         let mut curr = self.root;
         while let Some(child) = curr.find_child_by_offset(self, pos) {
@@ -510,7 +521,7 @@ impl IRTree {
     }
     pub fn get_path_source_range(
         &self,
-        node_path: &IRDagNodePath,
+        node_path: &IRTreeNodePath,
     ) -> Result<SourceRangeIndex, JsError> {
         let mut pos = SourcePosIndex::zero();
         let mut end = pos;
@@ -557,27 +568,199 @@ impl IRTree {
     }
 }
 
-pub type IRDagNodePathBuf = SmallVec<[IRTreeNodeID; 4]>;
-pub type IRDagNodePath = [IRTreeNodeID];
+pub type IRTreeNodePathBuf = SmallVec<[IRTreeNodeID; 4]>;
+pub type IRTreeNodePath = [IRTreeNodeID];
 
 pub type IRObjPathBuf = SmallVec<[IRTreeObjID; 4]>;
 pub type IRObjPath = [IRTreeObjID];
 
+#[derive(Debug, Clone)]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub struct GuideTreePath {
-    node_path: IRDagNodePathBuf,
+pub struct IRTreeCursor {
+    module_id: usize,
+    node_path: IRTreeNodePathBuf,
     source_range: Vec<SourceRangeIndex>,
 }
 
-#[wasm_bindgen::prelude::wasm_bindgen]
-impl GuideTreePath {
+impl IRTreeCursor {
+    /// 从结点路径创建自己.
+    pub fn from_node_path(ir: &ModuleInfo, node_path: impl Into<IRTreeNodePathBuf>) -> Self {
+        let node_path = node_path.into();
+        let mut source_range = Vec::with_capacity(node_path.len());
+        for &node in &node_path {
+            source_range.push(node.pos_delta(ir.ir_tree()));
+        }
+        let mut curr_pos = source_range[0].start;
+        for range in source_range.iter_mut().skip(1) {
+            let Range { start, end } = range.clone();
+            let new_start = curr_pos.advance(start);
+            let new_end = curr_pos.advance(end);
+            *range = new_start..new_end;
+            curr_pos = new_start;
+        }
+        Self {
+            module_id: ir.get_id(),
+            node_path,
+            source_range,
+        }
+    }
+
+    pub fn get_last(&self) -> Result<(IRTreeNodeID, SourceRangeIndex), JsError> {
+        let Some(last_node) = self.node_path.last() else {
+            return fmt_jserr!(Err "invalid empty path");
+        };
+        let Some(last_range) = self.source_range.last() else {
+            return fmt_jserr!(Err "invalid empty path");
+        };
+        Ok((*last_node, last_range.clone()))
+    }
+
+    pub fn do_get_node(&self, ir: &ModuleInfo) -> Result<IRTreeNodeDt, JsError> {
+        let (last_node, last_range) = self.get_last()?;
+        let tree = ir.ir_tree();
+        let obj = last_node.obj(tree);
+        Ok(IRTreeNodeDt {
+            obj,
+            kind: obj.get_class(ir)?,
+            label: obj.get_name(ir)?,
+            src_range: ir.source().byte_range_to_monaco(last_range.clone())?,
+        })
+    }
+
+    pub fn do_get_children(&self, ir: &ModuleInfo) -> Result<Vec<IRTreeNodeDt>, JsError> {
+        let (last_node, last_range) = self.get_last()?;
+        let children = last_node.children(ir.ir_tree());
+        let mut ret = Vec::with_capacity(children.len());
+        let begin_pos = last_range.start;
+        for child in children {
+            let tree = ir.ir_tree();
+            let obj = child.obj(tree);
+            let range_delta = child.pos_delta(tree);
+            let src_start = begin_pos.advance(range_delta.start);
+            let src_end = begin_pos.advance(range_delta.end);
+            ret.push(IRTreeNodeDt {
+                obj,
+                kind: obj.get_class(ir)?,
+                label: obj.get_name(ir)?,
+                src_range: ir.source().byte_range_to_monaco(src_start..src_end)?,
+            });
+        }
+        Ok(ret)
+    }
+
+    pub fn do_goto_child(&mut self, ir: &ModuleInfo, node: IRTreeNodeID) -> Result<(), JsError> {
+        let (last_node, last_range) = self.get_last()?;
+        let tree = ir.ir_tree();
+        js_assert!(Some(last_node) == node.get_parent(tree))?;
+
+        let range_delta = node.pos_delta(tree);
+        let begin_pos = last_range.start;
+        let src_start = begin_pos.advance(range_delta.start);
+        let src_end = begin_pos.advance(range_delta.end);
+        self.node_path.push(node);
+        self.source_range.push(src_start..src_end);
+        Ok(())
+    }
+}
+
+#[wasm_bindgen]
+impl IRTreeCursor {
+    #[wasm_bindgen(constructor)]
     pub fn new_root(ir: &ModuleInfo) -> Self {
         let tree = ir.ir_tree();
         let root = tree.root;
         let source_range = root.deref(tree).pos_delta.clone();
         Self {
+            module_id: ir.get_id(),
             node_path: smallvec::smallvec![root],
             source_range: vec![source_range],
         }
+    }
+
+    /// 克隆一个新的 Cursor, 共享底层的树结构, 但路径和位置独立. 这个操作很快, 因为树结构是共享的.
+    pub fn clone(&self) -> Self {
+        Clone::clone(self)
+    }
+
+    /// 从对象路径创建自己. 这个操作需要先把对象路径解析成结点路径, 因此可能会比较慢.
+    ///
+    /// @param {IRTreeObjID[]} objs - 对象路径, 从模块全局对象开始, 每个对象都是前一个对象的直接子对象.
+    pub fn from_path(ir: &ModuleInfo, objs: JsIRObjPath) -> Result<Self, JsError> {
+        let objs: IRObjPathBuf = ModuleInfo::deserialize(objs)?;
+        let nodes = ir.ir_tree().resolve_path(&objs)?;
+        Ok(Self::from_node_path(ir, nodes))
+    }
+
+    /// 断言当前 Cursor 在所有权上属于该 Module.
+    pub fn assert_inside_module(&self, ir: &ModuleInfo) -> Result<(), JsError> {
+        js_assert!(self.module_id == ir.get_id())
+    }
+
+    /// 获取当前结点的信息. 这个操作需要先检查所有权, 然后把结点信息序列化成 JS 对象.
+    ///
+    /// @returns {IRTreeNodeDt} 当前结点的信息, 包括对象 ID、结点类型、结点标签和结点对应的源代码范围.
+    pub fn get_node(&self, ir: &ModuleInfo) -> Result<JsIRTreeNodeDt, JsError> {
+        self.assert_inside_module(ir)?;
+        self.do_get_node(ir).and_then(|x| ModuleInfo::serialize(&x))
+    }
+
+    /// 获取当前结点的直接子结点的信息列表. 这个操作需要先检查所有权, 然后把子结点信息序列化成 JS 对象.
+    pub fn get_children(&self, ir: &ModuleInfo) -> Result<JsIRTreeNodes, JsError> {
+        self.assert_inside_module(ir)?;
+        self.do_get_children(ir)
+            .and_then(|x| ModuleInfo::serialize(&x))
+    }
+
+    /// 移动到父结点. 这个操作需要先检查所有权, 然后更新路径和位置.
+    pub fn goto_parent(&mut self) -> Result<(), JsError> {
+        js_assert!(self.node_path.len() > 1)?;
+        js_assert!(self.source_range.len() > 1)?;
+        self.node_path.pop();
+        self.source_range.pop();
+        Ok(())
+    }
+
+    /// 移动到子结点. 这个操作需要先检查所有权, 然后检查子结点是否真的属于当前结点, 最后更新路径和位置.
+    ///
+    /// @param {IRTreeObjID} obj - 目标子结点的对象 ID. 这个对象必须是当前结点的直接子结点, 否则返回 Err.
+    pub fn goto_child(&mut self, ir: &ModuleInfo, obj: JsTreeObjID) -> Result<(), JsError> {
+        self.assert_inside_module(ir)?;
+        let obj: IRTreeObjID = ModuleInfo::deserialize(obj)?;
+
+        let (last_node, _) = self.get_last()?;
+        let tree = ir.ir_tree();
+        let Some(&child_node) = last_node
+            .children(tree)
+            .iter()
+            .find(|&&child| child.obj(tree) == obj)
+        else {
+            return fmt_jserr!(Err "target object is not a direct child of current node: {obj:?}");
+        };
+
+        self.do_goto_child(ir, child_node)
+    }
+
+    /// 检查当前结点是否有某个对象 ID 的直接子结点. 这个操作需要先检查所有权, 然后检查子结点是否真的属于当前结点.
+    pub fn has_child(&self, ir: &ModuleInfo, obj: JsTreeObjID) -> Result<bool, JsError> {
+        self.assert_inside_module(ir)?;
+        let obj: IRTreeObjID = ModuleInfo::deserialize(obj)?;
+
+        let (last_node, _) = self.get_last()?;
+        let tree = ir.ir_tree();
+        Ok(last_node
+            .children(tree)
+            .iter()
+            .any(|&child| child.obj(tree) == obj))
+    }
+
+    /// 根据当前结点路径, 生成对应的对象路径. 这个操作需要先检查所有权, 然后把对象路径序列化成 JS 对象.
+    pub fn emit_path(&self, ir: &ModuleInfo) -> Result<JsIRObjPath, JsError> {
+        self.assert_inside_module(ir)?;
+        let mut obj_path = IRObjPathBuf::with_capacity(self.node_path.len());
+        for &node_id in &self.node_path {
+            let node = node_id.deref(ir.ir_tree());
+            obj_path.push(node.obj);
+        }
+        ModuleInfo::serialize(&obj_path)
     }
 }

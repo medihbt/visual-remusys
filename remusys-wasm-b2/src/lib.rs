@@ -1,6 +1,7 @@
 mod dto;
 mod module;
 mod tree;
+mod types;
 
 pub use self::{
     dto::{call_graph::CallGraphDt, cfg::FuncCfgDt, dfg::BlockDfg, dom::DomTreeDt, *},
@@ -9,7 +10,7 @@ pub use self::{
         source_buf::{SourceBuf, SourceLine},
     },
     tree::{
-        IRDagNodePath, IRDagNodePathBuf, IRObjPath, IRObjPathBuf, IRTree, IRTreeChildren,
+        IRTreeNodePath, IRTreeNodePathBuf, IRObjPath, IRObjPathBuf, IRTree, IRTreeChildren,
         IRTreeErr, IRTreeNode, IRTreeNodeID, IRTreeObjID, IRTreeRes, SourcePosIndex,
         SourceRangeIndex, builder::IRDagBuilder,
     },
@@ -37,5 +38,23 @@ macro_rules! js_todo {
     };
     ($fmt:expr $(, $($arg:tt)*)?) => {
         $crate::fmt_jserr!(Err "TODO: {}", format!($fmt $(, $($arg)*)?))
+    };
+}
+
+#[macro_export]
+macro_rules! js_assert {
+    ($cond:expr $(,)?) => {
+        if !$cond {
+            $crate::fmt_jserr!(Err "assertion failed: {}", stringify!($cond))
+        } else {
+            Ok(())
+        }
+    };
+    ($cond:expr, $($arg:tt)+) => {
+        if !$cond {
+            $crate::fmt_jserr!(Err $($arg)+)
+        } else {
+            Ok(())
+        }
     };
 }

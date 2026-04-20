@@ -1,22 +1,9 @@
-import type { IRTreeNodeClass, IRTreeObjID } from "../ir/types";
 import * as XYFlow from "@xyflow/react";
 import * as Dagre from "dagre";
-
-export type GuideNodeBase = {
-    id: string;
-    irObject: IRTreeObjID;
-    label: string;
-    kind: IRTreeNodeClass;
-    focused: boolean;
-    parent?: GuideNodeBase;
-}
-export type GuideNodeExpand = GuideNodeBase & {
-    children: GuideNodeBase[]; // rendered node 一定有 children, 因为没有 children 的 node 不会被渲染.
-};
-export type GuideNodeItem = GuideNodeBase & {
-    children?: undefined; // menu item 一定没有 children, 因为只有被展开的 node 才会有 children.
-};
-export type GuideNodeData = GuideNodeExpand | GuideNodeItem;
+import { ChildRow } from "./ChildRow";
+import { TypeIcon } from "./TypeIcon";
+import { useGuideViewTreeStore } from "./guide-view-tree";
+import type { GuideNodeData, GuideNodeExpand } from "remusys-wasm-b2";
 
 export function guideNodeExpanded(data: GuideNodeData): boolean {
     return data.children !== undefined;
@@ -90,4 +77,119 @@ export type GuideRFNode = XYFlow.Node<GuideNodeExpand, "GuideNode">;
 export type GuideNodeProps = XYFlow.NodeProps<GuideRFNode>;
 
 export default function GuideViewNode(props: GuideNodeProps) {
+    const { data } = props;
+    const { expand, collapse, requestFocus } = useGuideViewTreeStore();
+
+    function tryFocusNode(node: GuideNodeData) {
+        requestFocus(node);
+    }
+
+    function handleToggle(child: GuideNodeData) {
+        if (guideNodeExpanded(child)) {
+            collapse(child);
+            return;
+        }
+        expand(child);
+    }
+
+    const isFocused = data.focusClass === "FocusNode";
+
+    return (
+        <div style={{ width: "100%", height: "100%", position: "relative" }}>
+            <XYFlow.Handle type="target" position={XYFlow.Position.Left} style={{ opacity: 0.5 }} />
+
+            <div
+                style={{
+                    width: "100%",
+                    height: "100%",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "4px",
+                    backgroundColor: "#fff",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    fontFamily: "system-ui, sans-serif",
+                }}
+            >
+                <div
+                    onDoubleClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        tryFocusNode(data);
+                    }}
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "8px 12px",
+                        backgroundColor: isFocused ? "#eef2ff" : "#f9fafb",
+                        borderBottom: "1px solid #e5e7eb",
+                        cursor: "pointer",
+                        userSelect: "none",
+                    }}
+                >
+                    <div
+                        style={{
+                            marginRight: "8px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                        }}
+                    >
+                        {isFocused ? (
+                            <div
+                                style={{
+                                    borderRadius: 9999,
+                                    padding: 4,
+                                    border: "2px solid #60a5fa",
+                                    display: "inline-flex",
+                                }}
+                            >
+                                <TypeIcon kind={data.kind} />
+                            </div>
+                        ) : (
+                            <TypeIcon kind={data.kind} />
+                        )}
+                    </div>
+                    <div
+                        style={{
+                            flex: 1,
+                            fontSize: "13px",
+                            fontWeight: 600,
+                            color: "#1f2937",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        {data.label.trim() === "" ? "(no name)" : data.label}
+                    </div>
+                </div>
+
+                <div style={{ overflowY: "auto", height: "100%" }}>
+                    {data.children.map((child) => (
+                        <ChildRow key={child.id} child={child} onToggle={handleToggle} />
+                    ))}
+                    {data.children.length === 0 && (
+                        <div
+                            style={{
+                                padding: "8px",
+                                fontSize: "11px",
+                                color: "#9ca3af",
+                                textAlign: "center",
+                            }}
+                        >
+                            (无子节点)
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <XYFlow.Handle
+                type="source"
+                position={XYFlow.Position.Right}
+                style={{ opacity: 0.5 }}
+            />
+        </div>
+    );
 }

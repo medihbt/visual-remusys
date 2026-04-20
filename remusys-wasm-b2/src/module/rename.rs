@@ -33,6 +33,7 @@ impl<'ir> IRRename<'ir> {
             ir_tree: dag,
             source,
             rev_local_names: rev_names,
+            ..
         } = module_info;
         Self {
             module,

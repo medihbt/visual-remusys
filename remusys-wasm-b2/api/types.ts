@@ -71,12 +71,6 @@ export type IRTreeObjID =
     | { type: "FuncHeader"; value: GlobalID }
     | { type: "BlockIdent"; value: BlockID }
     ;
-export function irTreeObjIdToStr(id: IRTreeObjID): string {
-    return JSON.stringify(id);
-}
-export function irTreeObjIdFromStr(s: string): IRTreeObjID {
-    return JSON.parse(s) as IRTreeObjID;
-}
 
 export type IRObjPath = IRTreeObjID[];
 
@@ -99,6 +93,7 @@ export interface IRTreeNodeDt {
     label: string;
     src_range: MonacoSrcRange;
 }
+export type IRTreeNodes = IRTreeNodeDt[];
 
 export type CfgNodeRole = "Entry" | "Branch" | "Exit";
 
@@ -194,7 +189,6 @@ export interface DomTreeDt {
     edges: Array<[BlockID, BlockID]>;
 }
 
-// module/rename.rs #[serde(tag = "type")]
 export type RenameRes =
     | { type: "Renamed" }
     | { type: "NoChange" }
@@ -202,3 +196,25 @@ export type RenameRes =
     | { type: "LocalNameConflict"; name: string }
     | { type: "UnnamedObject" };
 
+
+export type FocusClass =
+    | "NotFocused"
+    | "FocusNode"
+    | "FocusParent"
+    | "FocusScope";
+
+export type GuideNodeBase = {
+    id: string;
+    irObject: IRTreeObjID;
+    label: string;
+    kind: IRTreeNodeClass;
+    focusClass: FocusClass;
+    parent?: GuideNodeBase;
+}
+export type GuideNodeExpand = GuideNodeBase & {
+    children: GuideNodeBase[]; // expanded node 一定有 children, 因为没有 children 的 node 不会被渲染.
+};
+export type GuideNodeItem = GuideNodeBase & {
+    children?: undefined; // menu item 一定没有 children, 因为只有被展开的 node 才会有 children.
+};
+export type GuideNodeData = GuideNodeExpand | GuideNodeItem;

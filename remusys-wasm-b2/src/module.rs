@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ops::Range, str::FromStr};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    str::FromStr,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use remusys_ir::{
     SymbolStr,
@@ -15,6 +20,10 @@ use crate::{
     dto::{IRTreeNodeDt, cfg::FuncCfgDt, dfg::BlockDfg},
     fmt_jserr,
     rename::IRRename,
+    types::{
+        JsBlockDfg, JsCallGraphDt, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath, JsIRTreeNodeDt,
+        JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsTreeObjID,
+    },
 };
 
 pub mod name_revmap;
@@ -46,6 +55,7 @@ pub struct ModuleInfo {
     // 局部名称映射表, 注意不负责全局对象的名称. 这么做是因为全局名称的前缀 `@` 和局部名称的前缀 `%` 不同,
     // 两个命名空间不一样, 允许同名的全局对象和局部对象.
     rev_local_names: HashMap<FuncID, RevLocalNameMap>,
+    id: usize,
 }
 
 impl ModuleInfo {
@@ -64,6 +74,8 @@ impl ModuleInfo {
         Self::from_module(module, names)
     }
     fn from_module(module: impl Into<Box<Module>>, names: IRNameMap) -> Result<Self, JsError> {
+        static ID: AtomicUsize = AtomicUsize::new(0);
+
         let module = module.into();
         let mut ir_tree = IRTree::new();
         let mut builder = IRDagBuilder::new(module.as_ref(), &names, &ir_tree);
@@ -76,6 +88,7 @@ impl ModuleInfo {
             module,
             names,
             rev_local_names: HashMap::new(),
+            id: ID.fetch_add(1, Ordering::Relaxed),
         })
     }
 
@@ -86,14 +99,15 @@ impl ModuleInfo {
         Self::from_module(module, IRNameMap::default())
     }
 
-    pub fn serialize<T: Serialize>(value: &T) -> Result<JsValue, JsError> {
+    pub fn serialize<T: Serialize, V: From<JsValue>>(value: &T) -> Result<V, JsError> {
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
         value
             .serialize(&serializer)
             .map_err(|e| fmt_jserr!("Serialization error: {e:#?}"))
+            .map(|v| v.into())
     }
-    pub fn deserialize<T: DeserializeOwned>(value: JsValue) -> Result<T, JsError> {
-        serde_wasm_bindgen::from_value(value)
+    pub fn deserialize<T: DeserializeOwned>(value: impl Into<JsValue>) -> Result<T, JsError> {
+        serde_wasm_bindgen::from_value(value.into())
             .map_err(|e| fmt_jserr!("Deserialization error: {e:#?}"))
     }
 
@@ -102,6 +116,9 @@ impl ModuleInfo {
     }
     pub fn ir_tree(&self) -> &IRTree {
         &self.ir_tree
+    }
+    pub fn source(&self) -> &SourceBuf {
+        &self.source
     }
     pub fn names(&self) -> &IRNameMap {
         &self.names
@@ -243,6 +260,8 @@ impl ModuleInfo {
 #[wasm_bindgen]
 impl ModuleInfo {
     /// 从给定的源代码编译出一个 ModuleInfo. `ty` 参数指定了源代码的类型, 目前支持 "ir" 和 "sysy".
+    ///
+    /// @param {"ir" | "sysy"} ty - 源代码的类型, 可以是 "ir" 或 "sysy".
     pub fn compile_from(ty: &str, source: &str) -> Result<Self, JsError> {
         match ty {
             "ir" => Self::compile_from_ir(source),
@@ -256,8 +275,15 @@ impl ModuleInfo {
         self.source.to_string()
     }
 
+    /// 获取当前 Module 的临时唯一 ID.
+    pub fn get_id(&self) -> usize {
+        self.id
+    }
+
     /// 给定一个 Monaco 编辑器中的位置, 返回对应的 IR 对象路径. 这个路径可以用来在 JS 侧定位和高亮显示对应的 IR 对象.
-    pub fn path_of_srcpos(&self, pos: JsValue) -> Result<JsValue, JsError> {
+    ///
+    /// @param {MonacoSrcPos} pos - Monaco 编辑器中的位置, 包含 line 和 column 两个字段, 都是 1-based 的.
+    pub fn path_of_srcpos(&self, pos: JsMonacoSrcPos) -> Result<JsIRObjPath, JsError> {
         let monaco_pos: MonacoSrcPos = Self::deserialize(pos)?;
         let byte_pos = self.source.monaco_pos_to_byte(monaco_pos)?;
         let obj_path = self.ir_tree.locate_obj_path(byte_pos)?;
@@ -265,7 +291,10 @@ impl ModuleInfo {
     }
 
     /// IR Tree 加载器: 给定一个 IR 对象路径, 返回对应树结点的信息（包括它代表的 IR 对象、它的类型、它在源代码中的范围等）.
-    pub fn path_get_node(&self, path: JsValue) -> Result<JsValue, JsError> {
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径, 从模块全局对象开始, 每个对象都是前一个对象的直接子对象.
+    /// @return {IRTreeNodeDt} 树结点信息.
+    pub fn path_get_node(&self, path: JsIRObjPath) -> Result<JsIRTreeNodeDt, JsError> {
         let obj_path: IRObjPathBuf = Self::deserialize(path)?;
         let node_path = self.ir_tree.resolve_path(&obj_path)?;
         let Some(node_id) = node_path.last() else {
@@ -284,7 +313,10 @@ impl ModuleInfo {
     }
 
     /// IR Tree 加载器: 通过结点的 path 加载对应树结点的子结点.
-    pub fn ir_tree_get_children(&self, path: JsValue) -> Result<JsValue, JsError> {
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径, 从模块全局对象开始, 每个对象都是前一个对象的直接子对象.
+    /// @return {IRTreeNodeDt[]} 子结点信息数组.
+    pub fn ir_tree_get_children(&self, path: JsIRObjPath) -> Result<JsIRTreeNodes, JsError> {
         let obj_path: IRObjPathBuf = Self::deserialize(path)?;
         let mut node_path = self.ir_tree.resolve_path(&obj_path)?;
         let Some(last) = node_path.pop() else {
@@ -312,7 +344,10 @@ impl ModuleInfo {
     }
 
     /// 重命名一个 IR 对象（函数、基本块、指令等）. JS 侧需要废弃所有缓存, 重新构建 IRDag 和相关数据结构.
-    pub fn rename(&mut self, path: JsValue, new_name: &str) -> Result<JsValue, JsError> {
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径.
+    /// @param {string} new_name - 新名称, 不需要带前缀 `%` 或 `@`.
+    pub fn rename(&mut self, path: JsIRObjPath, new_name: &str) -> Result<JsRenameRes, JsError> {
         let obj_path: IRObjPathBuf = Self::deserialize(path)?;
         let Some(last) = obj_path.last().cloned() else {
             return fmt_jserr!(Err "object path cannot be empty");
@@ -325,7 +360,9 @@ impl ModuleInfo {
     /// 通过一个 IR 对象 ID 获取它在 IR Tree 中的路径.
     ///
     /// 对于可能出现一对多映射的情况, 会返回一个错误.
-    pub fn path_of_tree_object(&self, object_id: JsValue) -> Result<JsValue, JsError> {
+    ///
+    /// @param {IRTreeObjID} object_id - IR 对象 ID, 可以是模块、函数、基本块、指令等对象的 ID.
+    pub fn path_of_tree_object(&self, object_id: JsTreeObjID) -> Result<JsIRObjPath, JsError> {
         let object: IRTreeObjID = Self::deserialize(object_id)?;
         let path = self.path_vec_of_tree_object(object)?;
         if path.is_empty() {
@@ -334,8 +371,10 @@ impl ModuleInfo {
         Self::serialize(&path)
     }
 
-    /// 通过一个 IR 对象 ID 获取它的作用域
-    pub fn get_object_scope(&self, object_id: JsValue) -> Result<String, JsError> {
+    /// 通过一个 IR 对象 ID 获取它的作用域.
+    ///
+    /// @param {IRTreeObjID} object_id - IR 对象 ID, 可以是模块、函数、基本块、指令等对象的 ID.
+    pub fn get_object_scope(&self, object_id: JsTreeObjID) -> Result<String, JsError> {
         let object: IRTreeObjID = Self::deserialize(object_id)?;
         let path = self.path_vec_of_tree_object(object)?;
         if path.len() < 2 {
@@ -352,20 +391,29 @@ impl ModuleInfo {
 #[wasm_bindgen]
 impl ModuleInfo {
     /// 获取指定函数的控制流图.
-    pub fn get_func_cfg(&self, func_id: &str) -> Result<JsValue, JsError> {
+    ///
+    /// @param {GlobalID} func_id - 函数的全局 ID, 内存池索引的序列化版本, 和函数的名称表示一点关系也没有.
+    /// @return {FuncCfgDt} 函数的控制流图数据.
+    pub fn get_func_cfg(&self, func_id: &str) -> Result<JsFuncCfgDt, JsError> {
         let func_id = self.global_strid_as_func(func_id)?;
         FuncCfgDt::new(&self.module, &self.names, func_id)
             .and_then(|cfg_dt| Self::serialize(&cfg_dt))
     }
 
     /// 获取指定函数的支配树. 注意目前只支持支配树, 不支持后支配树.
-    pub fn get_func_dom_tree(&self, func_id: &str) -> Result<JsValue, JsError> {
+    ///
+    /// @param {GlobalID} func_id - 函数的全局 ID, 内存池索引的序列化版本, 和函数的名称表示一点关系也没有.
+    /// @return {DomTreeDt} 函数的支配树数据.
+    pub fn get_func_dom_tree(&self, func_id: &str) -> Result<JsDomTreeDt, JsError> {
         let func_id = self.global_strid_as_func(func_id)?;
         DomTreeDt::new(&self.module, func_id).and_then(|dt| Self::serialize(&dt))
     }
 
     /// 获取指定基本块的数据流图. 目前只支持单个基本块内的局部数据流, 不包含跨基本块的参数传递等数据流.
-    pub fn get_block_dfg(&self, block_id: &str) -> Result<JsValue, JsError> {
+    ///
+    /// @param {BlockID} block_id - 基本块的 ID, 内存池索引的序列化版本, 和基本块的名称表示一点关系也没有.
+    /// @return {BlockDfgDt} 基本块的数据流图数据.
+    pub fn get_block_dfg(&self, block_id: &str) -> Result<JsBlockDfg, JsError> {
         let block_id = match BlockID::from_str(block_id) {
             Ok(id) => id,
             Err(e) => return fmt_jserr!(Err "invalid block id: {block_id:?}, error: {e:#?}"),
@@ -374,7 +422,9 @@ impl ModuleInfo {
     }
 
     /// 获取整个模块的函数调用图. 这个调用图是一个有向图, 会合并重边.
-    pub fn get_call_graph(&self) -> Result<JsValue, JsError> {
+    ///
+    /// @return {CallGraphDt} 模块的函数调用图数据.
+    pub fn get_call_graph(&self) -> Result<JsCallGraphDt, JsError> {
         CallGraphDt::new(self).and_then(|cg| Self::serialize(&cg))
     }
 }

@@ -1,6 +1,7 @@
 import { TypeIcon } from "./TypeIcon";
 import "./ChildRow.css";
-import { guideNodeExpanded, type GuideNodeData } from "./Node";
+import { guideNodeExpanded } from "./Node";
+import type { GuideNodeData } from "remusys-wasm-b2";
 
 export type ChildRowProps = {
     child: GuideNodeData;
