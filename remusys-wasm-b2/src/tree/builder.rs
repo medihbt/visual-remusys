@@ -277,7 +277,7 @@ impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
             let end_pos = begin_pos.advance(len);
             self.src_push_range(node.src.clone());
             let new_node = node.id.insert_pos_delta(self.tree, begin_pos..end_pos);
-            return Ok(new_node);
+            return Ok(new_node.leak());
         }
 
         self.begin_pos();

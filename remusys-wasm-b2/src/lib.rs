@@ -3,6 +3,8 @@ mod module;
 mod tree;
 mod types;
 
+pub use hashbrown::{HashMap as BrownMap, HashSet as BrownSet};
+
 pub use self::{
     dto::{call_graph::CallGraphDt, cfg::FuncCfgDt, dfg::BlockDfg, dom::DomTreeDt, *},
     module::{
@@ -10,9 +12,9 @@ pub use self::{
         source_buf::{SourceBuf, SourceLine},
     },
     tree::{
-        IRTreeNodePath, IRTreeNodePathBuf, IRObjPath, IRObjPathBuf, IRTree, IRTreeChildren,
-        IRTreeErr, IRTreeNode, IRTreeNodeID, IRTreeObjID, IRTreeRes, SourcePosIndex,
-        SourceRangeIndex, builder::IRTreeBuilder,
+        IRObjPath, IRObjPathBuf, IRTree, IRTreeChildren, IRTreeErr, IRTreeNode, IRTreeNodeID,
+        IRTreeNodePath, IRTreeNodePathBuf, IRTreeObjID, IRTreeRes, ManagedNodeID, ManagedTreeID,
+        ManagedTreeNodeID, SourcePosIndex, SourceRangeIndex, builder::IRTreeBuilder,
     },
 };
 

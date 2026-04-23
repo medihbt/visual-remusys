@@ -17,7 +17,7 @@ export interface IRStorage {
 }
 
 export interface IRActions {
-    compile: (src_kind: SourceTy, src: string, filename?: string) => void;
+    compile: (src_kind: SourceTy, src: string, filename?: string) => ModuleInfo;
     getFocusSrcRange: () => MonacoSrcRange;
     getModule: () => ModuleInfo;
     setFocus: (path: IRObjPath) => void;
@@ -44,6 +44,7 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
         const module_name = filename ?? "input";
         const module = ModuleInfo.compile_from(src_kind, src, module_name);
         set({ module, source: module.dump_source(), focus: [{ type: "Module" }] });
+        return module;
     },
     getFocusSrcRange(): MonacoSrcRange {
         const { module, focus } = get();

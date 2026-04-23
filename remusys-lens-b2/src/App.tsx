@@ -12,6 +12,7 @@ import FlowViewer from "./flow/FlowViewer";
 import "@xyflow/react/dist/style.css";
 import SourceView from "./source_view/SourceView";
 import { clearCachedSource, loadCachedSource, saveCachedSource } from "./source-cache";
+import { useGraphState } from "./flow/state";
 
 type LoadAction = (mode: SourceTy, text: string, filename: string) => void;
 
@@ -54,12 +55,14 @@ function MainPage({ onLoad }: { onLoad: LoadAction }) {
 function App() {
   const module = useIRStore((s) => s.module);
   const compile = useIRStore((s) => s.compile);
+  const graphState = useGraphState();
   const [bootChecked, setBootChecked] = useState(false);
 
   const handleLoad = useCallback<LoadAction>((mode, text, filename) => {
-    compile(mode, text, filename);
+    const moduleInfo = compile(mode, text, filename);
+    graphState.initModule(moduleInfo);
     saveCachedSource({ type: mode, text, filename });
-  }, [compile]);
+  }, [compile, graphState, module]);
 
   useEffect(() => {
     if (bootChecked) return;
@@ -70,7 +73,8 @@ function App() {
     }
 
     try {
-      compile(cached.type, cached.text, cached.filename);
+      const moduleInfo = compile(cached.type, cached.text, cached.filename);
+      graphState.initModule(moduleInfo);
     } catch (error) {
       clearCachedSource();
       console.warn("Failed to restore cached source, fallback to FileLoader", error);

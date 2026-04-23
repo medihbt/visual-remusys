@@ -50,17 +50,18 @@
 //! 这个我没想好要怎么做, 现在处在做做看的状态.
 
 use std::{
-    cell::Cell,
-    collections::{HashMap, HashSet},
+    cell::{Cell, RefCell},
+    collections::HashSet,
     num::NonZeroU64,
     ops::Range,
+    vec,
 };
 
 use hashbrown::HashMap as BrownMap;
 use mtb_entity_slab::{EntityAlloc, GenIndex, IEntityAllocID, IPoliciedID, IndexedID, entity_id};
 use remusys_ir::ir::{
-    BlockID, FuncID, GlobalID, GlobalObj, ISubGlobalID, ISubInst, ISubInstID, InstID, InstObj,
-    JumpTargetID, UseID,
+    BlockID, GlobalID, GlobalObj, ISubGlobalID, ISubInst, ISubInstID, InstID, InstObj,
+    JumpTargetID, UseID, ValueSSA,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
@@ -71,7 +72,7 @@ use crate::{
     IRTreeNodeClass, IRTreeNodeDt, ModuleInfo,
     dto::ValueDt,
     fmt_jserr, js_assert,
-    types::{JsIRObjPath, JsIRTreeNodeDt, JsIRTreeNodes, JsTreeObjID},
+    types::{JsIRObjPath, JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcRange, JsTreeObjID},
 };
 
 pub mod builder;
@@ -248,6 +249,7 @@ pub type IRTreeChildren = SmallVec<[IRTreeNodeID; 4]>;
 #[derive(Debug)]
 pub struct IRTreeNode {
     parent: Cell<Option<IRTreeNodeID>>,
+    disposed: Cell<bool>,
     children_map: BrownMap<IRTreeObjID, usize>,
     pub obj: IRTreeObjID,
     pub children: IRTreeChildren,
@@ -259,6 +261,7 @@ impl IRTreeNode {
     pub fn new(obj: IRTreeObjID, pos_delta: SourceRangeIndex) -> Self {
         Self {
             parent: Cell::new(None),
+            disposed: Cell::new(false),
             obj,
             children: SmallVec::new(),
             children_map: BrownMap::new(),
@@ -283,6 +286,7 @@ impl IRTreeNode {
         };
         Self {
             parent: Cell::new(None),
+            disposed: Cell::new(false),
             obj,
             children,
             children_map,
@@ -368,6 +372,8 @@ impl IRTreeNodeID {
         for child in &node.children {
             child.deref(tree).set_parent(node_id);
         }
+        let mut inner = tree.inner.borrow_mut();
+        inner.unmap.entry(node.obj).or_default().push(node_id);
         debug_assert!(
             tree.check_children_invariant(node_id),
             "children invariant broken when allocating node {:?}",
@@ -377,10 +383,36 @@ impl IRTreeNodeID {
     }
 
     pub fn deref(self, tree: &IRTree) -> &IRTreeNode {
-        self.deref_alloc(&tree.alloc)
+        let node = self.deref_alloc(&tree.alloc);
+        if node.disposed.get() {
+            panic!("IRTreeNodeID {:?} has been disposed", self);
+        }
+        node
     }
     pub fn deref_mut(self, tree: &mut IRTree) -> &mut IRTreeNode {
-        self.deref_alloc_mut(&mut tree.alloc)
+        let node = self.deref_alloc_mut(&mut tree.alloc);
+        if node.disposed.get() {
+            panic!("IRTreeNodeID {:?} has been disposed", self);
+        }
+        node
+    }
+    pub fn try_deref(self, tree: &IRTree) -> Result<&IRTreeNode, JsError> {
+        let Some(node) = self.try_deref_alloc(&tree.alloc) else {
+            return fmt_jserr!(Err "invalid IRTreeNodeID: {:?}", self);
+        };
+        if node.disposed.get() {
+            return fmt_jserr!(Err "IRTreeNodeID {:?} has been disposed", self);
+        }
+        Ok(node)
+    }
+    pub fn try_deref_mut(self, tree: &mut IRTree) -> Result<&mut IRTreeNode, JsError> {
+        let Some(node) = self.try_deref_alloc_mut(&mut tree.alloc) else {
+            return fmt_jserr!(Err "invalid IRTreeNodeID: {:?}", self);
+        };
+        if node.disposed.get() {
+            return fmt_jserr!(Err "IRTreeNodeID {:?} has been disposed", self);
+        }
+        Ok(node)
     }
 
     pub fn to_strid(self) -> SmolStr {
@@ -401,7 +433,7 @@ impl IRTreeNodeID {
         self.deref(tree).pos_delta.clone()
     }
     pub fn pos_delta_len(self, tree: &IRTree) -> Result<SourcePosIndex, JsError> {
-        let delta = self.pos_delta(tree);
+        let delta = self.try_deref(tree)?.pos_delta.clone();
         delta.end.delta_to(delta.start)
     }
 
@@ -412,12 +444,35 @@ impl IRTreeNodeID {
         offset: SourcePosIndex,
     ) -> Option<IRTreeNodeID> {
         let node = self.deref(tree);
-        for &child_id in node.children.iter() {
+        let children = node.children.as_slice();
+
+        if children.len() < 8 {
+            for &child_id in children {
+                let Range { start, end } = child_id.pos_delta(tree);
+                if offset >= start && offset < end {
+                    return Some(child_id);
+                }
+            }
+            return None;
+        }
+
+        let mut lo = 0usize;
+        let mut hi = children.len();
+
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let child_id = children[mid];
             let Range { start, end } = child_id.pos_delta(tree);
-            if start <= offset && offset < end {
+
+            if offset < start {
+                hi = mid;
+            } else if offset >= end {
+                lo = mid + 1;
+            } else {
                 return Some(child_id);
             }
         }
+
         None
     }
     /// 根据子结点的 obj 找到对应的子结点 ID. 如果没有找到, 返回 None.
@@ -426,12 +481,12 @@ impl IRTreeNodeID {
     }
 
     /// 树拷贝操作: 把该子树拷贝一份, 修改新子树的源码位置.
-    pub fn insert_pos_delta(self, tree: &IRTree, delta: SourceRangeIndex) -> IRTreeNodeID {
+    pub fn insert_pos_delta(self, tree: &IRTree, delta: SourceRangeIndex) -> ManagedTreeID<'_> {
         let old_children = self.children(tree);
         let new_children = {
             let mut new_children = IRTreeChildren::with_capacity(old_children.len());
             for &child_id in old_children.iter() {
-                new_children.push(tree.clone_subtree(child_id));
+                new_children.push(tree.clone_subtree(child_id).leak());
             }
             new_children
         };
@@ -442,7 +497,7 @@ impl IRTreeNodeID {
         if let Some(parent) = self.deref(tree).get_parent() {
             new_node.deref(tree).set_parent(parent);
         }
-        new_node
+        ManagedTreeID::new_tree(tree, new_node)
     }
     pub fn set_pos_delta(self, tree: &mut IRTree, delta: SourceRangeIndex) {
         let node = self.deref_mut(tree);
@@ -451,6 +506,114 @@ impl IRTreeNodeID {
         }
         node.pos_delta = delta;
     }
+
+    pub fn dispose(self, tree: &IRTree) -> Result<(), JsError> {
+        let node = self.try_deref(tree)?;
+        if node.disposed.replace(true) {
+            return fmt_jserr!(Err "IRTreeNodeID {:?} has already been disposed", self);
+        }
+        js_assert!(node.parent.get().is_none())?;
+        for child in node.children.iter() {
+            if let Some(child_node) = child.try_deref_alloc(&tree.alloc) {
+                child_node.parent.set(None);
+            }
+        }
+        let mut inner = tree.inner.borrow_mut();
+        inner.free_queue.push(self);
+        self.unregister_unmap(node.obj, &mut inner.unmap);
+        Ok(())
+    }
+
+    pub fn tree_dispose(self, tree: &IRTree) -> Result<(), JsError> {
+        let mut stack = vec![self];
+        let mut inner = tree.inner.borrow_mut();
+        while let Some(node_id) = stack.pop() {
+            for &child_id in node_id.children(tree).iter() {
+                stack.push(child_id);
+            }
+            let node = node_id.try_deref(tree)?;
+            node.disposed.set(true);
+            inner.free_queue.push(node_id);
+            node_id.unregister_unmap(node.obj, &mut inner.unmap);
+        }
+        Ok(())
+    }
+
+    fn unregister_unmap(self, obj: IRTreeObjID, unmap: &mut IRTreeUnmap) {
+        use hashbrown::hash_map::Entry;
+        let Entry::Occupied(mut occ) = unmap.entry(obj) else {
+            return;
+        };
+        occ.get_mut().retain(|&mut id| id != self);
+        if occ.get().is_empty() {
+            occ.remove();
+        }
+    }
+}
+
+pub struct ManagedTreeNodeID<'ir, const DROP_TREE: bool> {
+    tree: &'ir IRTree,
+    node_id: IRTreeNodeID,
+}
+pub type ManagedNodeID<'ir> = ManagedTreeNodeID<'ir, false>;
+pub type ManagedTreeID<'ir> = ManagedTreeNodeID<'ir, true>;
+
+impl<'ir, const DROP_TREE: bool> std::ops::Deref for ManagedTreeNodeID<'ir, DROP_TREE> {
+    type Target = IRTreeNode;
+    fn deref(&self) -> &Self::Target {
+        self.node_id.deref(self.tree)
+    }
+}
+impl<'ir, const DROP_TREE: bool> Drop for ManagedTreeNodeID<'ir, DROP_TREE> {
+    fn drop(&mut self) {
+        if DROP_TREE {
+            let _ = self.node_id.tree_dispose(self.tree);
+        } else {
+            let _ = self.node_id.dispose(self.tree);
+        }
+    }
+}
+impl<'ir> ManagedTreeNodeID<'ir, true> {
+    pub fn new_tree(tree: &'ir IRTree, node_id: IRTreeNodeID) -> Self {
+        Self { tree, node_id }
+    }
+}
+impl<'ir> ManagedTreeNodeID<'ir, false> {
+    pub fn new_node(tree: &'ir IRTree, node_id: IRTreeNodeID) -> Self {
+        Self { tree, node_id }
+    }
+}
+impl<'ir, const DROP_TREE: bool> ManagedTreeNodeID<'ir, DROP_TREE> {
+    pub fn node_id(&self) -> IRTreeNodeID {
+        self.node_id
+    }
+    pub fn tree(&self) -> &IRTree {
+        self.tree
+    }
+
+    pub fn free_tree<const D: bool>(self) -> ManagedTreeNodeID<'ir, D> {
+        let res = ManagedTreeNodeID {
+            tree: self.tree,
+            node_id: self.node_id,
+        };
+        std::mem::forget(self);
+        res
+    }
+
+    pub fn dispose(self) -> Result<(), JsError> {
+        if DROP_TREE {
+            self.node_id.tree_dispose(self.tree)?;
+        } else {
+            self.node_id.dispose(self.tree)?;
+        }
+        std::mem::forget(self);
+        Ok(())
+    }
+    pub fn leak(self) -> IRTreeNodeID {
+        let node_id = self.node_id;
+        std::mem::forget(self);
+        node_id
+    }
 }
 
 pub struct IRTree {
@@ -458,8 +621,18 @@ pub struct IRTree {
     pub alloc: EntityAlloc<IRTreeNode>,
     /// 主干树的根结点 ID, 对应模块全局对象
     pub root: IRTreeNodeID,
-    /// 每个函数下的 IRTreeNodeID, 对应函数对象. 之所以单独存储, 是为了方便快速定位函数结点, 因为函数结点下面的树可能很大.
-    pub funcs: HashMap<FuncID, IRTreeNodeID>,
+    inner: RefCell<IRTreeInner>,
+}
+
+pub type IRTreeUnmapNodes = SmallVec<[IRTreeNodeID; 2]>;
+pub type IRTreeUnmap = BrownMap<IRTreeObjID, IRTreeUnmapNodes>;
+
+#[derive(Default)]
+struct IRTreeInner {
+    /// 主干树之外的对象到结点 ID 的映射. 可能存在一个对象对应多个结点的情况, 因此值是个列表.
+    unmap: IRTreeUnmap,
+    /// 释放队列.
+    free_queue: Vec<IRTreeNodeID>,
 }
 
 impl Default for IRTree {
@@ -470,7 +643,7 @@ impl Default for IRTree {
         Self {
             alloc,
             root,
-            funcs: HashMap::new(),
+            inner: RefCell::default(),
         }
     }
 }
@@ -480,7 +653,9 @@ impl IRTree {
         Self::default()
     }
 
-    pub fn clone_subtree(&self, node_id: IRTreeNodeID) -> IRTreeNodeID {
+    /// 树拷贝操作: 把该子树拷贝一份, 结点 ID 全新分配, 但源码位置不变.
+    /// 注意，这个操作返回的对象如果不主动 leak 的话会在 drop 时自动释放掉新子树的所有结点.
+    pub fn clone_subtree(&self, node_id: IRTreeNodeID) -> ManagedTreeID<'_> {
         fn do_clone(tree: &IRTree, node_id: IRTreeNodeID) -> IRTreeNodeID {
             let node = node_id.deref(tree);
             let mut new_children = IRTreeChildren::with_capacity(node.children.len());
@@ -489,7 +664,7 @@ impl IRTree {
             }
             IRTreeNodeID::new_full(tree, node.obj, node.pos_delta.clone(), new_children)
         }
-        do_clone(self, node_id)
+        ManagedTreeNodeID::new_tree(self, do_clone(self, node_id))
     }
 
     pub fn print_to_dot(&self, ir: &ModuleInfo, root: IRTreeNodeID) -> Result<String, JsError> {
@@ -537,6 +712,16 @@ impl IRTree {
             }
         }
         Ok(node_path)
+    }
+
+    /// 根据主干树之外的对象找到对应的结点 ID 列表. 可能存在一个对象对应多个结点的情况, 因此返回值是个列表.
+    /// 如果没有找到, 返回空列表.
+    pub fn unmap_obj(&self, obj: IRTreeObjID) -> IRTreeUnmapNodes {
+        let inner = self.inner.borrow();
+        match inner.unmap.get(&obj) {
+            Some(set) => set.clone(),
+            None => IRTreeUnmapNodes::new(),
+        }
     }
 
     /// 根据源代码位置找到对应的结点路径. 结点路径是从根结点到目标结点的 ID 序列. 如果没有找到, 返回 Err.
@@ -594,11 +779,22 @@ impl IRTree {
         true
     }
 
+    /// 释放掉所有被标记为 disposed 的结点的内存. 这个函数不会修改 DAG 结构,
+    /// 因此被 disposed 的结点的父结点的 children 中仍然会保留这些结点的 ID, 只是这些 ID 已经不能被 deref 了.
+    pub fn free_disposed(&mut self) {
+        let free_queue = std::mem::take(&mut self.inner.get_mut().free_queue);
+        for node_id in free_queue {
+            node_id.0.free(&mut self.alloc);
+        }
+    }
+
     /// 从根和函数表出发, DFS 遍历整个 DAG, 找到所有没有被根或函数表直接或间接引用的结点, 进行垃圾回收.
     pub fn gc(&mut self) {
-        let mut visited = HashSet::new();
+        self.free_disposed();
+
+        let mut visited = crate::BrownSet::new();
         let mut stack = vec![self.root];
-        stack.extend(self.funcs.values().cloned());
+        let mut unmap = std::mem::take(&mut self.inner.get_mut().unmap);
         while let Some(node_id) = stack.pop() {
             if visited.contains(&node_id) {
                 continue;
@@ -609,8 +805,15 @@ impl IRTree {
                 stack.push(child_id);
             }
         }
-        self.alloc
-            .free_if(|_, _, id| !visited.contains(&IRTreeNodeID::from_backend(id)));
+        self.alloc.free_if(|tree_node, _, id| {
+            let node_id = IRTreeNodeID::from_backend(id);
+            let should_free = !visited.contains(&node_id);
+            if should_free {
+                node_id.unregister_unmap(tree_node.obj, &mut unmap);
+            }
+            should_free
+        });
+        self.inner.get_mut().unmap = unmap;
     }
 }
 
@@ -706,6 +909,101 @@ impl IRTreeCursor {
         self.source_range.push(src_start..src_end);
         Ok(())
     }
+
+    pub fn get_block_jump_from_nodes(
+        ir: &ModuleInfo,
+        bb: BlockID,
+    ) -> Result<Vec<IRTreeNodeID>, JsError> {
+        let ModuleInfo {
+            ir_tree, module, ..
+        } = ir;
+        let Some(block) = bb.try_deref_ir(module) else {
+            return fmt_jserr!(Err "invalid block id: {bb:?}");
+        };
+        let mut ret = Vec::new();
+        for (pred_id, _) in block.get_preds().iter(&module.allocs.jts) {
+            let tree_nodes = ir_tree.unmap_obj(IRTreeObjID::JumpTarget(pred_id));
+            ret.extend(tree_nodes);
+        }
+        Ok(ret)
+    }
+
+    pub fn get_value_used_nodes(
+        ir: &ModuleInfo,
+        value: ValueDt,
+    ) -> Result<Vec<IRTreeNodeID>, JsError> {
+        let ModuleInfo {
+            ir_tree, module, ..
+        } = ir;
+        let Some(value) = value.into_value(module) else {
+            return fmt_jserr!(Err "invalid value: {value:?}");
+        };
+        let mut ret = Vec::new();
+        let Some(dyn_traceable) = value.as_dyn_traceable(module) else {
+            return Ok(ret);
+        };
+        for (use_id, _) in dyn_traceable.user_iter(module) {
+            let tree_nodes = ir_tree.unmap_obj(IRTreeObjID::Use(use_id));
+            ret.extend(tree_nodes);
+        }
+
+        let ext = match value {
+            ValueSSA::Block(bb) => Self::get_block_jump_from_nodes(ir, bb)?,
+            _ => Vec::new(),
+        };
+        ret.extend(ext);
+        Ok(ret)
+    }
+
+    pub fn get_nodes_srcidx(
+        ir: &ModuleInfo,
+        nodes: &[IRTreeNodeID],
+    ) -> Result<Vec<SourceRangeIndex>, JsError> {
+        let mut ret = Vec::with_capacity(nodes.len());
+
+        struct NodeRanges<'ir> {
+            tree: &'ir IRTree,
+            map: BrownMap<IRTreeNodeID, SourceRangeIndex>,
+        }
+
+        impl<'ir> NodeRanges<'ir> {
+            fn new(ir: &'ir ModuleInfo) -> Self {
+                Self {
+                    tree: ir.ir_tree(),
+                    map: BrownMap::new(),
+                }
+            }
+
+            fn get(&mut self, node_id: IRTreeNodeID) -> Result<SourceRangeIndex, JsError> {
+                if node_id == self.tree.root {
+                    let range = node_id.pos_delta(self.tree);
+                    self.map.insert(node_id, range.clone());
+                    return Ok(range);
+                }
+                if let Some(range) = self.map.get(&node_id) {
+                    return Ok(range.clone());
+                }
+                let Some(parent) = node_id.get_parent(self.tree) else {
+                    return fmt_jserr!(Err "node {:?} has no parent", node_id);
+                };
+                let parent_range = self.get(parent)?;
+                let parent_start = parent_range.start;
+                let Range { start, end } = node_id.pos_delta(self.tree);
+                let range = Range {
+                    start: parent_start.advance(start),
+                    end: parent_start.advance(end),
+                };
+                self.map.insert(node_id, range.clone());
+                Ok(range)
+            }
+        }
+
+        let mut node_ranges = NodeRanges::new(ir);
+        for &node in nodes {
+            ret.push(node_ranges.get(node)?);
+        }
+        Ok(ret)
+    }
 }
 
 #[wasm_bindgen]
@@ -800,5 +1098,66 @@ impl IRTreeCursor {
             obj_path.push(node.obj);
         }
         ModuleInfo::serialize(&obj_path)
+    }
+
+    /// 获取当前结点对应的源代码范围. 这个操作需要先检查所有权, 然后把源代码范围序列化成 JS 对象.
+    pub fn get_source_range(&self, ir: &ModuleInfo) -> Result<JsMonacoSrcRange, JsError> {
+        self.assert_inside_module(ir)?;
+        let (_, last_range) = self.get_last()?;
+        ModuleInfo::serialize(&ir.source().byte_range_to_monaco(last_range.clone())?)
+    }
+
+    /// 给 Monaco 的代码高亮使用的: 获取当前结点路径指向的末端结点的引用对应的源码范围.
+    /// 这个操作需要用到 def-use 链.
+    pub fn get_reference_source_ranges(
+        &self,
+        ir: &ModuleInfo,
+    ) -> Result<Vec<JsMonacoSrcRange>, JsError> {
+        self.assert_inside_module(ir)?;
+        let (last_node, _) = self.get_last()?;
+        let ir_obj = last_node.try_deref(ir.ir_tree())?.obj;
+        let mut nodes = match ir_obj {
+            IRTreeObjID::Module => vec![],
+            IRTreeObjID::Use(use_id) => {
+                let Some(use_obj) = use_id.try_deref_ir(&ir.module) else {
+                    return fmt_jserr!(Err "invalid Use ID: {:?}", use_id);
+                };
+                Self::get_value_used_nodes(ir, use_obj.operand.get().into())?
+            }
+            IRTreeObjID::Global(global_id) => {
+                Self::get_value_used_nodes(ir, ValueDt::Global(global_id))?
+            }
+            IRTreeObjID::FuncArg(func_id, idx) => {
+                Self::get_value_used_nodes(ir, ValueDt::FuncArg(func_id, idx))?
+            }
+            IRTreeObjID::Block(block_id) => {
+                Self::get_value_used_nodes(ir, ValueDt::Block(block_id))?
+            }
+            IRTreeObjID::Inst(inst_id) => Self::get_value_used_nodes(ir, ValueDt::Inst(inst_id))?,
+            IRTreeObjID::JumpTarget(jt_id) => {
+                let Some(jt_obj) = jt_id.try_deref_ir(&ir.module) else {
+                    return fmt_jserr!(Err "invalid JumpTarget ID: {:?}", jt_id);
+                };
+                let Some(bb) = jt_obj.block.get() else {
+                    return fmt_jserr!(Err "JumpTarget {:?} has no block", jt_id);
+                };
+                Self::get_value_used_nodes(ir, ValueDt::Block(bb))?
+            }
+            IRTreeObjID::FuncHeader(global_id) => {
+                Self::get_value_used_nodes(ir, ValueDt::Global(global_id))?
+            }
+            IRTreeObjID::BlockIdent(block_id) => {
+                Self::get_value_used_nodes(ir, ValueDt::Block(block_id))?
+            }
+        };
+        nodes.retain(|node| node.obj(ir.ir_tree()) != ir_obj);
+        let range_idx = Self::get_nodes_srcidx(ir, &nodes)?;
+        let mut ret = Vec::with_capacity(range_idx.len());
+        for range in range_idx {
+            let monaco_pos = ir.source().byte_range_to_monaco(range)?;
+            let serialized = ModuleInfo::serialize(&monaco_pos)?;
+            ret.push(serialized);
+        }
+        Ok(ret)
     }
 }

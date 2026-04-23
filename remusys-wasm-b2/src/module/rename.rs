@@ -4,7 +4,9 @@ use remusys_ir::{SymbolStr, ir::*};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsError;
 
-use crate::{IRTreeBuilder, IRTree, IRTreeObjID, ModuleInfo, RevLocalNameMap, SourceBuf, fmt_jserr};
+use crate::{
+    IRTree, IRTreeBuilder, IRTreeObjID, ModuleInfo, RevLocalNameMap, SourceBuf, fmt_jserr,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -30,7 +32,7 @@ impl<'ir> IRRename<'ir> {
         let ModuleInfo {
             module,
             names,
-            ir_tree: dag,
+            ir_tree: tree,
             source,
             rev_local_names: rev_names,
             ..
@@ -39,7 +41,7 @@ impl<'ir> IRRename<'ir> {
             module,
             names,
             rev_names,
-            tree: dag,
+            tree,
             source,
             object,
         }
@@ -200,25 +202,12 @@ impl<'ir> IRRename<'ir> {
 
     /// 权宜之计, 先实现一个全量更新的函数, 先改名字, 然后重建整个 IRDag 和相关数据结构. 之后再优化成增量更新.
     fn full_update(&mut self) -> Result<(), JsError> {
-        let allocs = &self.module.allocs;
-
-        let mut builder = IRTreeBuilder::new(self.module, self.names, self.tree);
+        let mut new_tree = IRTree::new();
+        let mut builder = IRTreeBuilder::new(self.module, self.names, &new_tree);
         let new_root = builder.build(IRTreeObjID::Module)?;
         *self.source = SourceBuf::from(builder.source_buf.as_str());
-        self.tree.root = new_root;
-        let mut funcs = HashMap::new();
-        for id in new_root.children(self.tree) {
-            let IRTreeObjID::Global(gid) = id.obj(self.tree) else {
-                continue;
-            };
-            let Some(func_id) = FuncID::try_from_global(allocs, gid) else {
-                continue;
-            };
-            if !func_id.is_extern(allocs) {
-                funcs.insert(func_id, *id);
-            }
-        }
-        self.tree.funcs = funcs;
+        new_tree.root = new_root;
+        *self.tree = new_tree;
         Ok(())
     }
 }

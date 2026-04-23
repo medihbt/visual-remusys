@@ -101,7 +101,10 @@ function buildMenuItems(
       const irObj = node.irObject;
       if (irObj.type === "BlockIdent") {
         // 这类节点没有对应的 Block 实体, 无法提供特定于实体的菜单项.
-        return [];
+        return [{
+          label: "聚焦此处",
+          onSelect: node => treeActions.requestFocus(node),
+        }];
       }
       if (irObj.type !== "Block")
         throw new Error("Block node with non-Block IR object");

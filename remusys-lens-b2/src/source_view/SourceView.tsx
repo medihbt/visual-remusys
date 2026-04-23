@@ -5,6 +5,7 @@ import { editor } from "monaco-editor";
 import { useIRStore } from "../ir/state";
 import llvmMonarch from "./llvmMonarch.ts";
 import "./SourceView.css";
+import { IRTreeCursor, ModuleInfo, type IRObjPath, type MonacoSrcRange } from "remusys-wasm-b2";
 
 function handleEditorMount(
   ed: editor.IStandaloneCodeEditor,
@@ -30,6 +31,17 @@ function handleEditorMount(
   monacoRef.current = monaco;
 }
 
+function getReferenceSourceRanges(module: ModuleInfo, focus: IRObjPath): MonacoSrcRange[] {
+  const cursor = IRTreeCursor.from_path(module, focus);
+  let ranges: MonacoSrcRange[] = [];
+  try {
+    ranges = cursor.get_reference_source_ranges(module);
+  } finally {
+    cursor.free();
+  }
+  return ranges;
+}
+
 export default function SourceView() {
   const source = useIRStore((s) => s.source);
   const focus = useIRStore((s) => s.focus);
@@ -48,22 +60,41 @@ export default function SourceView() {
     }
 
     try {
-      const rangeDt = getFocusSrcRange();
-      const range = new monaco.Range(
-        rangeDt.start.line,
-        rangeDt.start.column,
-        rangeDt.end.line,
-        rangeDt.end.column,
-      );
-      decorationsRef.current = ed.deltaDecorations(decorationsRef.current, [
-        {
-          range,
+      if (focus.length > 1) {
+        const rangeDt = getFocusSrcRange();
+        const referenceRanges = getReferenceSourceRanges(module, focus);
+        const focusRange = new monaco.Range(
+          rangeDt.start.line,
+          rangeDt.start.column,
+          rangeDt.end.line,
+          rangeDt.end.column,
+        );
+        const referenceDecorations = referenceRanges.map((referenceRange) => ({
+          range: new monaco.Range(
+            referenceRange.start.line,
+            referenceRange.start.column,
+            referenceRange.end.line,
+            referenceRange.end.column,
+          ),
           options: {
-            className: "source-focus-decoration",
+            className: "source-reference-decoration",
           },
-        },
-      ]);
-      ed.revealRangeInCenterIfOutsideViewport(range);
+        }));
+
+        decorationsRef.current = ed.deltaDecorations(decorationsRef.current, [
+          ...referenceDecorations,
+          {
+            range: focusRange,
+            options: {
+              className: "source-focus-decoration",
+            },
+          },
+        ]);
+        ed.revealRangeInCenterIfOutsideViewport(focusRange);
+      } else {
+        // 模块级焦点, 不高亮任何区域
+        decorationsRef.current = ed.deltaDecorations(decorationsRef.current, []);
+      }
     } catch {
       decorationsRef.current = ed.deltaDecorations(decorationsRef.current, []);
     }

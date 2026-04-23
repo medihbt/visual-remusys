@@ -7,3 +7,9 @@
   background-color: rgba(96, 165, 250, 0.25) !important;
   border-radius: 2px;
 }
+
+.source-reference-decoration {
+  background-color: rgba(148, 163, 184, 0.10) !important;
+  border-bottom: 1px dashed rgba(100, 116, 139, 0.85);
+  border-radius: 1px;
+}
