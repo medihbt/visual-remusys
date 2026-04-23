@@ -16,13 +16,16 @@
     "@headlessui/react": "^2.2.9",
     "@monaco-editor/react": "^4.7.0",
     "@types/dagre": "^0.7.54",
-    "@viz-js/viz": "^3.24.0",
     "@xyflow/react": "^12.10.1",
     "dagre": "^0.8.5",
+    "elkjs": "^0.11.1",
     "immer": "^11.1.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-reflex": "^5.0.5",
     "remusys-wasm-b2": "file:../remusys-wasm-b2/pkg/remusys-wasm-b2-0.2.0.tgz",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

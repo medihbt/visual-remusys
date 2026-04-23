@@ -98,6 +98,9 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "BlockDfg")]
     pub type JsBlockDfg;
 
+    #[wasm_bindgen(typescript_type = "DefUseGraph")]
+    pub type JsDefUseGraph;
+
     #[wasm_bindgen(typescript_type = "CallGraphNodeRole")]
     pub type JsCallGraphNodeRole;
 

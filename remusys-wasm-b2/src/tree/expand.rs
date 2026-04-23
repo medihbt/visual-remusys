@@ -9,9 +9,50 @@ use crate::{
     types::{JsGuideNodeData, JsIRObjPath},
 };
 
+enum ExpandStat {
+    Unexpanded,
+    Children(BrownMap<IRTreeObjID, Node>),
+}
+
+impl ExpandStat {
+    fn is_empty(&self) -> bool {
+        matches!(self, ExpandStat::Unexpanded)
+    }
+
+    fn clear(&mut self) {
+        *self = ExpandStat::Unexpanded;
+    }
+
+    fn get_mut(&mut self, key: &IRTreeObjID) -> Option<&mut Node> {
+        match self {
+            ExpandStat::Unexpanded => None,
+            ExpandStat::Children(children) => children.get_mut(key),
+        }
+    }
+    fn get(&self, key: &IRTreeObjID) -> Option<&Node> {
+        match self {
+            ExpandStat::Unexpanded => None,
+            ExpandStat::Children(children) => children.get(key),
+        }
+    }
+
+    fn insert(&mut self, key: IRTreeObjID, value: Node) {
+        match self {
+            ExpandStat::Unexpanded => {
+                let mut children = BrownMap::new();
+                children.insert(key, value);
+                *self = ExpandStat::Children(children);
+            }
+            ExpandStat::Children(children) => {
+                children.insert(key, value);
+            }
+        }
+    }
+}
+
 struct Node {
     ir_object: IRTreeObjID,
-    expand_children: BrownMap<IRTreeObjID, Node>,
+    expand_children: ExpandStat,
 }
 
 impl Node {
@@ -23,9 +64,25 @@ impl Node {
         )
     }
 
+    fn is_expanded(&self) -> bool {
+        !self.expand_children.is_empty()
+    }
+
+    fn collapse_children(&mut self) {
+        let ExpandStat::Children(children) = &mut self.expand_children else {
+            return;
+        };
+        for (_, child) in children.iter_mut() {
+            child.expand_children = ExpandStat::Unexpanded;
+        }
+    }
+
     fn expand(&mut self, tree: &IRTree, self_node: IRTreeNodeID) -> bool {
         if !self.can_expand() {
             return false;
+        }
+        if self.is_expanded() {
+            return true;
         }
         let children = self_node.children(tree);
         let mut new_expand_children = BrownMap::with_capacity(children.len());
@@ -33,11 +90,11 @@ impl Node {
             let ir_object = child.obj(tree);
             let node = Node {
                 ir_object,
-                expand_children: BrownMap::new(),
+                expand_children: ExpandStat::Unexpanded,
             };
             new_expand_children.insert(ir_object, node);
         }
-        self.expand_children = new_expand_children;
+        self.expand_children = ExpandStat::Children(new_expand_children);
         true
     }
 
@@ -54,12 +111,12 @@ impl Node {
             let ir_object = child.obj(tree);
             let mut node = Node {
                 ir_object,
-                expand_children: BrownMap::new(),
+                expand_children: ExpandStat::Unexpanded,
             };
             node.dfs_expand(tree, child);
             new_expand_children.insert(ir_object, node);
         }
-        self.expand_children = new_expand_children;
+        self.expand_children = ExpandStat::Children(new_expand_children);
     }
 }
 
@@ -75,6 +132,11 @@ impl IRExpandTree {
         let mut node = &self.root;
         let ir_tree = ir.ir_tree();
         let mut tree_node = ir_tree.root;
+
+        let mut path = path.iter();
+        if path.next() != Some(&IRTreeObjID::Module) {
+            return fmt_jserr!(Err "Path must start with module node");
+        }
         for &obj in path {
             let tree_children = tree_node.children(ir_tree);
             let Some(&tree_child) = tree_children
@@ -83,11 +145,11 @@ impl IRExpandTree {
             else {
                 return Ok(None);
             };
-            if node.expand_children.is_empty() {
+            let ExpandStat::Children(children) = &node.expand_children else {
                 return Ok(None);
-            }
+            };
 
-            let Some(node_child) = node.expand_children.get(&obj) else {
+            let Some(node_child) = children.get(&obj) else {
                 return Ok(None);
             };
             node = node_child;
@@ -103,6 +165,11 @@ impl IRExpandTree {
         let mut node = &mut self.root;
         let ir_tree = ir.ir_tree();
         let mut tree_node = ir_tree.root;
+
+        let mut path = path.iter();
+        if path.next() != Some(&IRTreeObjID::Module) {
+            return fmt_jserr!(Err "Path must start with module node");
+        }
         for &obj in path {
             let tree_children = tree_node.children(ir_tree);
             let Some(&tree_child) = tree_children
@@ -111,11 +178,16 @@ impl IRExpandTree {
             else {
                 return fmt_jserr!(Err "IR object {:?} not found in IR tree", obj);
             };
-            if node.expand_children.is_empty() && !node.expand(ir_tree, tree_node) {
+            if let ExpandStat::Unexpanded = node.expand_children
+                && !node.expand(ir_tree, tree_node)
+            {
                 return fmt_jserr!(Err "IR object {:?} cannot be expanded", node.ir_object);
             }
 
-            let Some(node_child) = node.expand_children.get_mut(&obj) else {
+            let ExpandStat::Children(children) = &mut node.expand_children else {
+                return fmt_jserr!(Err "IR object {:?} not found in expand tree", obj);
+            };
+            let Some(node_child) = children.get_mut(&obj) else {
                 return fmt_jserr!(Err "IR object {:?} not found in expand tree", obj);
             };
             node = node_child;
@@ -133,6 +205,21 @@ impl IRExpandTree {
         set_node.expand(ir_tree, tree_node);
         Ok(())
     }
+    fn do_expand_two(&mut self, ir: &ModuleInfo, path: &IRObjPath) -> Result<(), JsError> {
+        js_assert!(ir.get_id() == self.module_id, "Module ID mismatch")?;
+
+        let ir_tree = ir.ir_tree();
+        let (set_node, tree_node) = self.node_mut_expanded(ir, path)?;
+        // Now expand set node itself and its children.
+        set_node.expand(ir_tree, tree_node);
+        for &child in tree_node.children(ir_tree) {
+            let child_obj = child.obj(ir_tree);
+            if let Some(child_node) = set_node.expand_children.get_mut(&child_obj) {
+                child_node.expand(ir_tree, child);
+            }
+        }
+        Ok(())
+    }
     fn do_dfs_expand(&mut self, ir: &ModuleInfo, path: &IRObjPath) -> Result<(), JsError> {
         js_assert!(ir.get_id() == self.module_id, "Module ID mismatch")?;
 
@@ -147,6 +234,13 @@ impl IRExpandTree {
 
         let (set_node, _) = self.node_mut_expanded(ir, path)?;
         set_node.expand_children.clear();
+        Ok(())
+    }
+    fn do_collapse_children(&mut self, ir: &ModuleInfo, path: &IRObjPath) -> Result<(), JsError> {
+        js_assert!(ir.get_id() == self.module_id, "Module ID mismatch")?;
+
+        let (set_node, _) = self.node_mut_expanded(ir, path)?;
+        set_node.collapse_children();
         Ok(())
     }
 
@@ -166,7 +260,7 @@ impl IRExpandTree {
         let ir_object = tree_node.obj(ir_tree);
         let mut new_node = Node {
             ir_object,
-            expand_children: BrownMap::new(),
+            expand_children: ExpandStat::Unexpanded,
         };
 
         // 约定: expand_children 非空表示该结点在旧状态下是展开的.
@@ -215,14 +309,14 @@ impl IRExpandTree {
                 ir_object,
                 Node {
                     ir_object,
-                    expand_children: BrownMap::new(),
+                    expand_children: ExpandStat::Unexpanded,
                 },
             );
         }
 
         let root_node = Node {
             ir_object: IRTreeObjID::Module,
-            expand_children,
+            expand_children: ExpandStat::Children(expand_children),
         };
         Self {
             module_id: ir.get_id(),
@@ -243,6 +337,12 @@ impl IRExpandTree {
         self.do_expand(ir, &path)
     }
 
+    /// 展开这一层 path 所示的结点, 以及它下面的一层子结点.
+    pub fn expand_two(&mut self, ir: &ModuleInfo, path: JsIRObjPath) -> Result<(), JsError> {
+        let path: IRObjPathBuf = ModuleInfo::deserialize(path)?;
+        self.do_expand_two(ir, &path)
+    }
+
     /// 展开 path 所示的结点和它下面的所有后代结点. 这个函数的行为和 `expand_one` 类似, 但是它会递归地展开所有后代结点.
     ///
     /// @param {IRTreeObjID[]} path - 结点路径, 类型 `IRTreeObjID[]`.
@@ -257,6 +357,13 @@ impl IRExpandTree {
     pub fn collapse(&mut self, ir: &ModuleInfo, path: JsIRObjPath) -> Result<(), JsError> {
         let path: IRObjPathBuf = ModuleInfo::deserialize(path)?;
         self.do_collapse(ir, &path)
+    }
+
+    /// 收起 path 所示的结点的子结点, 但是不收起这个结点自己. 这个函数会把这个结点下面的所有子结点都收起来,
+    /// 但是这个结点本身保持展开状态.
+    pub fn collapse_children(&mut self, ir: &ModuleInfo, path: JsIRObjPath) -> Result<(), JsError> {
+        let path: IRObjPathBuf = ModuleInfo::deserialize(path)?;
+        self.do_collapse_children(ir, &path)
     }
 
     /// 判断 path 所示的结点是否已经展开了.
@@ -282,9 +389,14 @@ impl IRExpandTree {
         let focus_path: IRObjPathBuf = ModuleInfo::deserialize(focus_path)?;
         let focus_obj = *focus_path.last().unwrap();
         let mut root_node = self.do_load_tree(ir)?;
+        root_node.focus_class = if focus_obj == IRTreeObjID::Module {
+            GuideFocusClass::FocusNode
+        } else {
+            GuideFocusClass::FocusParent
+        };
         // 标记 focus path 上的结点.
         let mut focus_node = &mut root_node;
-        for &obj in &focus_path {
+        for &obj in focus_path.iter().skip(1) {
             let Some(children) = &mut focus_node.children else {
                 break;
             };

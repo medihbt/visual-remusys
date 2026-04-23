@@ -157,12 +157,19 @@ export interface DfgSection {
 
 export interface DfgEdge {
     id: UseID;
+    label: string;
     from: DfgNodeID;
     to: DfgNodeID;
 }
 
 export interface BlockDfg {
     sections: DfgSection[];
+    edges: DfgEdge[];
+}
+
+/** 以某个值为中心构建出的简单图, 这个比 BlockDfg 简单多了 */
+export interface DefUseGraph {
+    nodes: DfgNode[];
     edges: DfgEdge[];
 }
 
@@ -212,7 +219,7 @@ export type GuideNodeBase = {
     parent?: GuideNodeBase;
 }
 export type GuideNodeExpand = GuideNodeBase & {
-    children: GuideNodeBase[]; // expanded node 一定有 children, 因为没有 children 的 node 不会被渲染.
+    children: GuideNodeData[]; // expanded node 一定有 children, 因为没有 children 的 node 不会被渲染.
 };
 export type GuideNodeItem = GuideNodeBase & {
     children?: undefined; // menu item 一定没有 children, 因为只有被展开的 node 才会有 children.

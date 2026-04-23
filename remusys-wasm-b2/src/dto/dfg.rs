@@ -79,6 +79,7 @@ pub struct DfgSection {
 #[derive(Debug, Clone, Serialize)]
 pub struct DfgEdge {
     pub id: UseID,
+    pub label: UseKind,
     pub from: DfgNodeID,
     pub to: DfgNodeID,
 }
@@ -367,6 +368,7 @@ impl<'ir> BlockDfgBuilder<'ir> {
 
         self.edges.push(DfgEdge {
             id: edge,
+            label: edge.get_kind(self.module),
             from: user_id,
             to: operand_id,
         });

@@ -1,121 +1,71 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { ReflexContainer, ReflexElement, ReflexSplitter } from "react-reflex";
+import "react-reflex/styles.css";
+import GuideView from "./guide_view/GuideView";
+import "./App.css";
+import AppMenu from "./AppMenu";
+import { useIRStore } from "./ir/state";
+import FileLoader from "./FileLoader";
+import { useGraphState } from "./flow/state";
 
-function App() {
-  const [count, setCount] = useState(0)
+import "@xyflow/react/dist/style.css";
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+interface PanePlaceholderProps {
+  title: string;
+  description?: string | React.ReactNode;
 }
 
-export default App
+function PanePlaceholder({ title, description = "施工中" }: PanePlaceholderProps) {
+  return (
+    <div className="pane-placeholder">
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </div>
+  );
+}
+
+function MainPage() {
+  const compileModule = useIRStore((st) => st.compile);
+  return (
+    <div className="app-root">
+      <header>
+        <AppMenu onLoad={compileModule} />
+      </header>
+
+      <main className="app-main">
+        <ReflexContainer orientation="vertical" style={{ height: "100%" }}>
+          <ReflexElement minSize={50} flex={40}>
+            <section className="panel-left">
+              <ReflexContainer orientation="horizontal" style={{ height: "100%" }}>
+                <ReflexElement minSize={50} flex={60}>
+                  <div className="left-top">
+                    <PanePlaceholder title="源码编辑器" />
+                  </div>
+                </ReflexElement>
+
+                <ReflexSplitter />
+
+                <ReflexElement minSize={50} flex={40}>
+                  <GuideView />
+                </ReflexElement>
+              </ReflexContainer>
+            </section>
+          </ReflexElement>
+
+          <ReflexSplitter />
+
+          <ReflexElement minSize={50} flex={60}>
+            <PanePlaceholder title="图视图" description={`当前图类型: ${JSON.stringify(useGraphState().graphType)}`} />
+          </ReflexElement>
+        </ReflexContainer>
+      </main>
+    </div>
+  );
+}
+
+function App() {
+  const module = useIRStore(s => s.module);
+  const onLoad = useIRStore(s => s.compile);
+  return module ? <MainPage /> : <FileLoader onLoad={onLoad} />;
+}
+
+export default App;

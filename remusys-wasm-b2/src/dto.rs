@@ -6,6 +6,7 @@ use crate::{IRTreeObjID, MonacoSrcRange, fmt_jserr};
 
 pub mod call_graph;
 pub mod cfg;
+pub mod defuse_graph;
 pub mod dfg;
 pub mod dom;
 pub mod testing;
@@ -86,6 +87,15 @@ impl From<ConstData> for ValueDt {
             },
             ConstData::Float(FPKind::Ieee32, f) => Self::F32(f as f32),
             ConstData::Float(FPKind::Ieee64, f) => Self::F64(f),
+        }
+    }
+}
+impl From<UserID> for ValueDt {
+    fn from(user_id: UserID) -> Self {
+        match user_id {
+            UserID::Expr(expr_id) => Self::Expr(expr_id),
+            UserID::Inst(inst_id) => Self::Inst(inst_id),
+            UserID::Global(global_id) => Self::Global(global_id),
         }
     }
 }

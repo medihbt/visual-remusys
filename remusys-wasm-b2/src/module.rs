@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     ops::Range,
+    path::Path,
     str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -17,16 +18,15 @@ use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 use crate::{
     CallGraphDt, DomTreeDt, IRDagBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
-    dto::{IRTreeNodeDt, cfg::FuncCfgDt, dfg::BlockDfg},
+    dto::{IRTreeNodeDt, cfg::FuncCfgDt, defuse_graph::DefUseGraphDt, dfg::BlockDfg},
     fmt_jserr,
     rename::IRRename,
     types::{
-        JsBlockDfg, JsCallGraphDt, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath, JsIRTreeNodeDt,
-        JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsTreeObjID,
+        JsBlockDfg, JsCallGraphDt, JsDefUseGraph, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath,
+        JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsTreeObjID,
     },
 };
 
-pub mod name_revmap;
 pub mod rename;
 pub mod source_buf;
 
@@ -262,12 +262,18 @@ impl ModuleInfo {
     /// 从给定的源代码编译出一个 ModuleInfo. `ty` 参数指定了源代码的类型, 目前支持 "ir" 和 "sysy".
     ///
     /// @param {"ir" | "sysy"} ty - 源代码的类型, 可以是 "ir" 或 "sysy".
-    pub fn compile_from(ty: &str, source: &str) -> Result<Self, JsError> {
-        match ty {
+    pub fn compile_from(ty: &str, source: &str, filename: &str) -> Result<Self, JsError> {
+        let mut res = match ty {
             "ir" => Self::compile_from_ir(source),
             "sysy" => Self::compile_from_sysy(source),
             ty => fmt_jserr!(Err "unsupported source type: {ty}"),
-        }
+        }?;
+        let module_name = Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("input");
+        res.module.name = module_name.to_string();
+        Ok(res)
     }
 
     /// 导出当前 ModuleInfo 中的源代码文本. 这个文本可以用来在 Monaco 编辑器中显示和编辑.
@@ -419,6 +425,17 @@ impl ModuleInfo {
             Err(e) => return fmt_jserr!(Err "invalid block id: {block_id:?}, error: {e:#?}"),
         };
         BlockDfg::new(self, block_id).and_then(|dfg| Self::serialize(&dfg))
+    }
+
+    /// 获取以某个指令为中心的 Def-Use 图. 这个图包含了该指令的所有直接操作数和所有直接用户, 以及它们之间的连接关系.
+    /// 注意这个图可能包含多条重边, 因为一个指令可能多次使用同一个操作数, 也可能被同一个用户多次使用.
+    /// 目前这个图只包含直接的 Def-Use 关系, 不包含跨基本块的数据流关系
+    pub fn get_def_use_graph(&self, inst_id: &str) -> Result<JsDefUseGraph, JsError> {
+        let inst_id = match InstID::from_str(inst_id) {
+            Ok(id) => id,
+            Err(e) => return fmt_jserr!(Err "invalid instruction id: {inst_id:?}, error: {e:#?}"),
+        };
+        DefUseGraphDt::new(self, inst_id).and_then(|dg| Self::serialize(&dg))
     }
 
     /// 获取整个模块的函数调用图. 这个调用图是一个有向图, 会合并重边.

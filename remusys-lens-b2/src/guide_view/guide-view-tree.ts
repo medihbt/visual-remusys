@@ -39,7 +39,6 @@
  * 3. 如何在同一 Module 内的树刷新后尽量保持展示不突兀.
  */
 
-import { useIRStore } from "../ir/state";
 import type {
     GuideNodeBase,
     GuideNodeData,
@@ -49,8 +48,7 @@ import type {
 } from "remusys-wasm-b2";
 import { IRExpandTree, IRTreeCursor } from "remusys-wasm-b2";
 
-import { create } from "zustand";
-import { devtools } from "zustand/middleware";
+import { type IRState } from "../ir/state";
 
 const MODULE_ID: IRTreeObjID = { type: "Module" };
 const MODULE_PATH: IRObjPath = [MODULE_ID];
@@ -74,54 +72,37 @@ export type GuideTreeBuildResult = {
 };
 
 /**
- * GuideView 本地状态（最小 UI 状态）。
+ * GuideView 私有控制器状态。
  *
- * 注意：焦点是全局状态，由 `IRStore.focus` 统一维护，这里不再保存本地副本。
+ * 这是 GuideView 组件内部的可变状态容器，不是全局 store。
  */
-export type GuideViewTreeState = {
+export type GuideTreeController = {
     /** 当前 `IRExpandTree` 所属 module 的临时唯一 ID。 */
     moduleId?: number;
     /** wasm 侧展开状态树实例（权威展开状态存储）。 */
     expandTree?: IRExpandTree;
-    /** 每次重建树后自增的版本号，可用于防陈旧异步结果。 */
-    treeEpoch: number;
-    /** 最近一次构建得到的树根。 */
-    root?: GuideNodeExpand;
 };
 
-/**
- * GuideView 树状态动作集合。
- */
-export type GuideViewTreeActions = {
-    /** 同一 Module 生命周期内刷新可见树并做状态对齐。 */
-    refreshSameModule: () => GuideTreeBuildResult;
-    /** 重新编译/重载 Module 后的硬重置入口。 */
-    resetForNewModule: () => GuideTreeBuildResult;
-    /** 请求设置焦点路径，并基于新焦点重建树。 */
-    requestFocusPath: (path: IRObjPath) => GuideTreeBuildResult;
-    /** 展开指定节点。 */
-    expand(node: GuideNodeData): GuideTreeBuildResult;
-    /** 收起指定节点及其可达子树。 */
-    collapse(node: GuideNodeData): GuideTreeBuildResult;
-    /** 通过节点请求焦点路径（路径由当前树重建）。 */
-    requestFocus(node: GuideNodeData): GuideTreeBuildResult;
-};
+export function createGuideTreeController(): GuideTreeController {
+    return {};
+}
 
-/**
- * GuideView 树状态仓库类型。
- */
-export type GuideViewTreeStore = GuideViewTreeState & GuideViewTreeActions;
+export function disposeGuideTreeController(controller: GuideTreeController) {
+    controller.expandTree?.free();
+    controller.expandTree = undefined;
+    controller.moduleId = undefined;
+}
 
 function clonePath(path: IRObjPath): IRObjPath {
     return path.map((x) => ({ ...x })) as IRObjPath;
 }
 
-function getGlobalFocusPath(): IRObjPath {
-    return clonePath(useIRStore.getState().focus);
+function getGlobalFocusPath(irStore: IRState): IRObjPath {
+    return clonePath(irStore.focus);
 }
 
-function reconcileFocusPath(focusPath: IRObjPath): IRObjPath {
-    const module = useIRStore.getState().getModule();
+function reconcileFocusPath(irStore: IRState, focusPath: IRObjPath): IRObjPath {
+    const module = irStore.getModule();
     const cursor = new IRTreeCursor(module);
     let currentPath: IRObjPath = [];
     try {
@@ -154,11 +135,15 @@ function connectGuideTree(node: GuideNodeExpand) {
         }
     }
 }
-function buildGuideTreeFromWasm(root: GuideNodeData, focusPath: IRObjPath): GuideTreeBuildResult {
+function buildGuideTreeFromWasm(
+    irStore: IRState,
+    root: GuideNodeData,
+    focusPath: IRObjPath
+): GuideTreeBuildResult {
     if (!root.children) {
         throw new Error("root node must have children");
     }
-    const nextFocusPath = reconcileFocusPath(focusPath);
+    const nextFocusPath = reconcileFocusPath(irStore, focusPath);
     connectGuideTree(root);
     return { root, nextFocusPath };
 }
@@ -167,7 +152,7 @@ function irObjEq(a: IRTreeObjID, b: IRTreeObjID): boolean {
     return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function pathOfNode(node: GuideNodeData): IRObjPath {
+export function pathOfNode(node: GuideNodeData): IRObjPath {
     const path: IRTreeObjID[] = [];
     let current: GuideNodeBase | undefined = node;
     while (current) {
@@ -178,23 +163,22 @@ function pathOfNode(node: GuideNodeData): IRObjPath {
     return path;
 }
 
-function reloadTreeWithWasm(expandTree: IRExpandTree, requestedFocusPath: IRObjPath): GuideTreeBuildResult {
-    const irStore = useIRStore.getState();
+function reloadTreeWithWasm(
+    irStore: IRState,
+    expandTree: IRExpandTree,
+    requestedFocusPath: IRObjPath
+): GuideTreeBuildResult {
     const module = irStore.getModule();
-    const nextFocusPath = ensureNonEmptyPath(reconcileFocusPath(requestedFocusPath));
-    if (nextFocusPath !== requestedFocusPath) {
-        irStore.setFocus(nextFocusPath);
-    }
+    const nextFocusPath = ensureNonEmptyPath(reconcileFocusPath(irStore, requestedFocusPath));
     const root = expandTree.load_tree(module, nextFocusPath);
-    const res = buildGuideTreeFromWasm(root, nextFocusPath);
-    if (res.nextFocusPath !== nextFocusPath) {
-        irStore.setFocus(res.nextFocusPath);
-    }
+    const res = buildGuideTreeFromWasm(irStore, root, nextFocusPath);
+    // irStore 自己内部会做一次路径相等性检查, 避免循环状态更新
+    irStore.setFocus(res.nextFocusPath);
     return res;
 }
 
-function ensureExpandTree(state: GuideViewTreeState): { moduleId: number; expandTree: IRExpandTree } {
-    const module = useIRStore.getState().getModule();
+function ensureExpandTree(irStore: IRState, state: GuideTreeController): { moduleId: number; expandTree: IRExpandTree } {
+    const module = irStore.getModule();
     const moduleId = module.get_id();
     if (state.expandTree && state.moduleId === moduleId) {
         return { moduleId, expandTree: state.expandTree };
@@ -206,139 +190,126 @@ function ensureExpandTree(state: GuideViewTreeState): { moduleId: number; expand
     };
 }
 
-function applyBuildResult(result: GuideTreeBuildResult) {
-    useIRStore.getState().setFocus(result.nextFocusPath);
+/** 同一 Module 生命周期内刷新可见树并做状态对齐。 */
+export function refreshSameModule(controller: GuideTreeController, irStore: IRState): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore));
+}
+
+/** 重新编译/重载 Module 后的硬重置入口。 */
+export function resetForNewModule(controller: GuideTreeController, irStore: IRState): GuideTreeBuildResult {
+    const module = irStore.getModule();
+    const moduleId = module.get_id();
+    const expandTree = IRExpandTree.new(module);
+    const resetFocus = clonePath(MODULE_PATH);
+    const result = reloadTreeWithWasm(irStore, expandTree, resetFocus);
+    controller.expandTree?.free();
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return result;
+}
+
+/** 展开指定节点。 */
+export function expandNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const path = pathOfNode(node);
+    const module = irStore.getModule();
+    console.log("Expanding node at path:", path);
+    expandTree.expand_one(module, path);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
     return {
-        root: result.root,
+        ...reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore)),
+        resolvedPath: path,
+    };
+}
+
+/** 展开这个结点和它的一层子结点（占位）。 */
+export function expandChildrenNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const path = pathOfNode(node);
+    const module = irStore.getModule();
+    expandTree.expand_two(module, path);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return refreshSameModule(controller, irStore);
+}
+
+/** 深度优先展开指定节点及其子树（占位）。 */
+export function dfsExpandNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const path = pathOfNode(node);
+    const module = irStore.getModule();
+    expandTree.expand_all(module, path);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return refreshSameModule(controller, irStore);
+}
+
+/** 收起指定节点及其可达子树。 */
+export function collapseNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const path = pathOfNode(node);
+    if (path.length === 1 && path[0].type === "Module") {
+        return refreshSameModule(controller, irStore);
+    }
+
+    const globalFocus = getGlobalFocusPath(irStore);
+    const collapsePath = path;
+    const focusInsideCollapsed =
+        collapsePath.length <= globalFocus.length &&
+        collapsePath.every((obj, idx) => irObjEq(obj, globalFocus[idx]));
+    if (focusInsideCollapsed) {
+        irStore.setFocus(clonePath(collapsePath));
+    }
+
+    const module = irStore.getModule();
+    expandTree.collapse(module, collapsePath);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return {
+        ...reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore)),
+        resolvedPath: collapsePath,
+    };
+}
+
+export function collapseChildrenNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const path = pathOfNode(node);
+
+    const module = irStore.getModule();
+    console.log("Collapsing children of node at path:", path);
+    expandTree.collapse_children(module, path);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return refreshSameModule(controller, irStore);
+}
+
+/** 通过节点请求焦点路径（路径由当前树重建）。 */
+export function requestFocusNode(controller: GuideTreeController, irStore: IRState, node: GuideNodeData): GuideTreeBuildResult {
+    return requestFocusPath(controller, irStore, pathOfNode(node));
+}
+
+/** 请求设置焦点路径，并基于新焦点重建树。 */
+export function requestFocusPath(controller: GuideTreeController, irStore: IRState, requestedPath: IRObjPath): GuideTreeBuildResult {
+    const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
+    const nextFocusPath = ensureNonEmptyPath(reconcileFocusPath(irStore, requestedPath));
+    irStore.setFocus(nextFocusPath);
+    controller.moduleId = moduleId;
+    controller.expandTree = expandTree;
+    return {
+        ...reloadTreeWithWasm(irStore, expandTree, nextFocusPath),
+        resolvedPath: nextFocusPath,
     };
 }
 
 /**
- * GuideView 树状态仓库。
- *
- * 该仓库只管理最小 UI 状态（展开集合、可见树、路径索引、epoch）。焦点始终由全局 `IRStore`
- * 统一管理，避免跨视图同步问题。
- */
-export const useGuideViewTreeStore = create<GuideViewTreeStore>()(devtools((set, get) => ({
-    moduleId: undefined,
-    expandTree: undefined,
-    treeEpoch: 0,
-    root: undefined,
-
-    refreshSameModule() {
-        const st = get();
-        const { moduleId, expandTree } = ensureExpandTree(st);
-        const result = reloadTreeWithWasm(expandTree, getGlobalFocusPath());
-        set((prev) => ({
-            ...prev,
-            moduleId,
-            expandTree,
-            ...applyBuildResult(result),
-            treeEpoch: prev.treeEpoch + 1,
-        }));
-        return result;
-    },
-
-    resetForNewModule() {
-        const module = useIRStore.getState().getModule();
-        const moduleId = module.get_id();
-        const expandTree = IRExpandTree.new(module);
-        const resetFocus = clonePath(MODULE_PATH);
-        useIRStore.getState().setFocus(resetFocus);
-        const result = reloadTreeWithWasm(expandTree, resetFocus);
-        get().expandTree?.free();
-        set((prev) => ({
-            ...prev,
-            moduleId,
-            expandTree,
-            ...applyBuildResult(result),
-            treeEpoch: prev.treeEpoch + 1,
-        }));
-        return result;
-    },
-
-    expand(node) {
-        const st = get();
-        const { moduleId, expandTree } = ensureExpandTree(st);
-        const path = pathOfNode(node);
-        const module = useIRStore.getState().getModule();
-        expandTree.expand_one(module, path);
-        const result: GuideTreeBuildResult = {
-            ...reloadTreeWithWasm(expandTree, getGlobalFocusPath()),
-            resolvedPath: path,
-        };
-        set((prev) => ({
-            ...prev,
-            moduleId,
-            expandTree,
-            ...applyBuildResult(result),
-            treeEpoch: prev.treeEpoch + 1,
-        }));
-        return result;
-    },
-
-    collapse(node) {
-        const st = get();
-        const { moduleId, expandTree } = ensureExpandTree(st);
-        const path = pathOfNode(node);
-        if (path.length === 1 && path[0].type === "Module") {
-            return get().refreshSameModule();
-        }
-
-        const globalFocus = getGlobalFocusPath();
-        const collapsePath = path;
-        const focusInsideCollapsed =
-            collapsePath.length <= globalFocus.length &&
-            collapsePath.every((obj, idx) => irObjEq(obj, globalFocus[idx]));
-        if (focusInsideCollapsed) {
-            useIRStore.getState().setFocus(clonePath(collapsePath));
-        }
-
-        const module = useIRStore.getState().getModule();
-        expandTree.collapse(module, collapsePath);
-        const result: GuideTreeBuildResult = {
-            ...reloadTreeWithWasm(expandTree, getGlobalFocusPath()),
-            resolvedPath: collapsePath,
-        };
-        set((prev) => ({
-            ...prev,
-            moduleId,
-            expandTree,
-            ...applyBuildResult(result),
-            treeEpoch: prev.treeEpoch + 1,
-        }));
-        return result;
-    },
-
-    requestFocus(node) {
-        return get().requestFocusPath(pathOfNode(node));
-    },
-
-    requestFocusPath(requestedPath) {
-        const st = get();
-        const { moduleId, expandTree } = ensureExpandTree(st);
-        const nextFocusPath = ensureNonEmptyPath(reconcileFocusPath(requestedPath));
-        useIRStore.getState().setFocus(nextFocusPath);
-        const result: GuideTreeBuildResult = {
-            ...reloadTreeWithWasm(expandTree, nextFocusPath),
-            resolvedPath: nextFocusPath,
-        };
-        set((prev) => ({
-            ...prev,
-            moduleId,
-            expandTree,
-            ...applyBuildResult(result),
-            treeEpoch: prev.treeEpoch + 1,
-        }));
-        return result;
-    },
-}), { name: "GuideViewTreeStore" }));
-
-/**
  * 在同一 Module 生命周期内刷新并返回可见树根。
  *
- * 行为等价于 `useGuideViewTreeStore.getState().refreshSameModule().root`。
+ * 行为等价于 `refreshSameModule(controller, irStore).root`。
  */
-export function loadExpandedGuideTree(): GuideNodeExpand {
-    return useGuideViewTreeStore.getState().refreshSameModule().root;
+export function loadExpandedGuideTree(controller: GuideTreeController, irStore: IRState): GuideNodeExpand {
+    return refreshSameModule(controller, irStore).root;
 }

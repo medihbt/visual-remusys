@@ -1,7 +1,9 @@
 import { ModuleInfo } from "remusys-wasm-b2";
 import type {
     IRTreeNodeDt, IRObjPath, MonacoSrcRange, SourceTy, CallGraphDt,
-    FuncCfgDt, GlobalID, DomTreeDt, BlockDfg, BlockID
+    FuncCfgDt, GlobalID, DomTreeDt, BlockDfg, BlockID,
+    InstID,
+    DefUseGraph
 } from "remusys-wasm-b2";
 
 import { create } from "zustand";
@@ -15,7 +17,7 @@ export interface IRStorage {
 }
 
 export interface IRActions {
-    compile: (src_kind: SourceTy, src: string) => void;
+    compile: (src_kind: SourceTy, src: string, filename?: string) => void;
     getFocusSrcRange: () => MonacoSrcRange;
     getModule: () => ModuleInfo;
     setFocus: (path: IRObjPath) => void;
@@ -28,6 +30,8 @@ export interface IRActions {
     getFuncCfg(func: GlobalID): FuncCfgDt;
     getFuncDominance(func: GlobalID): DomTreeDt;
     getBlockDfg(block: BlockID): BlockDfg;
+    /** 以一条指令为中心构建的 Def-Use 图 */
+    getDefUseGraph(center: InstID): DefUseGraph;
 }
 
 export type IRState = IRStorage & IRActions;
@@ -36,8 +40,9 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
     module: undefined,
     source: "",
     focus: [{ type: "Module" }],
-    compile(src_kind, src) {
-        const module = ModuleInfo.compile_from(src_kind, src);
+    compile(src_kind, src, filename) {
+        const module_name = filename ?? "input";
+        const module = ModuleInfo.compile_from(src_kind, src, module_name);
         set({ module, source: module.dump_source(), focus: [{ type: "Module" }] });
     },
     getFocusSrcRange(): MonacoSrcRange {
@@ -55,7 +60,11 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
         }
         return module;
     },
-    setFocus(path) { set({ focus: path }); },
+    setFocus(path) {
+        const old = get().focus;
+        if (isSamePath(old, path)) return;
+        set({ focus: path });
+    },
     clearFocus() { set({ focus: [{ type: "Module" }] }); },
     getTreeChildren(path) {
         const { module } = get();
@@ -93,8 +102,26 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
         }
         return module.get_block_dfg(block)
     },
+    getDefUseGraph(center) {
+        const { module } = get();
+        if (!module) {
+            throw new Error("module not loaded");
+        }
+        return module.get_def_use_graph(center)
+    },
 }))));
 
 export function useIRFocus(): IRObjPath { return useIRStore().focus }
 export function useIRModule(): ModuleInfo { return useIRStore().getModule() }
 export function useIRFocusSrcRange(): MonacoSrcRange { return useIRStore().getFocusSrcRange() }
+export function isSamePath(a: IRObjPath, b: IRObjPath): boolean {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const ai = a[i], bi = b[i];
+        if (ai.type !== bi.type) return false;
+        if (ai.type === "Module" || bi.type === "Module") continue;
+        if (ai.value !== bi.value) return false;
+    }
+    return true;
+}
