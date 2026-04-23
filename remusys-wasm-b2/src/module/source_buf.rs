@@ -42,8 +42,16 @@ impl SourceLine {
     }
 
     pub fn byte_col_to_utf16(&self, byte_col: u32) -> Result<u32, JsError> {
-        if byte_col >= self.buffer.len() as u32 {
-            return fmt_jserr!(Err "invalid byte column: {byte_col} exceeds line length");
+        if byte_col > self.buffer.len() as u32 {
+            let self_len = self.buffer.len();
+            return fmt_jserr!(Err
+                "invalid byte column: {byte_col} exceeds line length {self_len}\n\
+                line content: {}",
+                self.as_str()
+            );
+        }
+        if byte_col == self.buffer.len() as u32 {
+            return Ok(self.as_str().chars().map(|x| x.len_utf16() as u32).sum());
         }
         if self.is_ascii {
             // For ASCII lines, byte column and UTF-16 column are the same
@@ -191,7 +199,10 @@ impl SourceBuf {
             return fmt_jserr!(Err "line {line} exceeds total lines {line_count}");
         };
         let column = linebuf.byte_col_to_utf16(col_byte)?;
-        Ok(MonacoSrcPos { line, column })
+        Ok(MonacoSrcPos {
+            line: line + 1,
+            column: column + 1,
+        })
     }
     pub fn monaco_pos_to_byte(&self, pos: MonacoSrcPos) -> Result<SourcePosIndex, JsError> {
         let MonacoSrcPos { line, column } = pos;

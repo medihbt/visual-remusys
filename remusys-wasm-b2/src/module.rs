@@ -9,21 +9,21 @@ use std::{
 use remusys_ir::{
     SymbolStr,
     ir::{
-        BlockID, FuncArgID, FuncID, GlobalID, IRNameMap, ISubGlobalID, ISubInst, ISubInstID,
-        InstID, Module, UserID,
+        BlockID, FuncArgID, FuncID, GlobalID, GlobalObj, IRNameMap, ISubGlobalID, ISubInst,
+        ISubInstID, InstID, Module, UserID,
     },
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 use crate::{
-    CallGraphDt, DomTreeDt, IRDagBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
+    CallGraphDt, DomTreeDt, IRTreeBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
     dto::{IRTreeNodeDt, cfg::FuncCfgDt, defuse_graph::DefUseGraphDt, dfg::BlockDfg},
     fmt_jserr,
     rename::IRRename,
     types::{
         JsBlockDfg, JsCallGraphDt, JsDefUseGraph, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath,
-        JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsTreeObjID,
+        JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsScopeID, JsTreeObjID,
     },
 };
 
@@ -48,9 +48,9 @@ impl Default for MonacoSrcPos {
 pub type RevLocalNameMap = HashMap<SymbolStr, IRTreeObjID>;
 #[wasm_bindgen]
 pub struct ModuleInfo {
-    source: SourceBuf,
-    ir_tree: IRTree,
-    module: Box<Module>,
+    pub(crate) source: SourceBuf,
+    pub(crate) ir_tree: IRTree,
+    pub(crate) module: Box<Module>,
     names: IRNameMap,
     // 局部名称映射表, 注意不负责全局对象的名称. 这么做是因为全局名称的前缀 `@` 和局部名称的前缀 `%` 不同,
     // 两个命名空间不一样, 允许同名的全局对象和局部对象.
@@ -59,12 +59,12 @@ pub struct ModuleInfo {
 }
 
 impl ModuleInfo {
-    fn compile_from_ir(source: &str) -> Result<Self, JsError> {
+    pub(crate) fn compile_from_ir(source: &str) -> Result<Self, JsError> {
         use remusys_ir_parser::{ModuleWithInfo, source_to_full_ir};
         let ModuleWithInfo { module, namemap } = source_to_full_ir(source)?;
         Self::from_module(module, namemap)
     }
-    fn compile_from_sysy(source: &str) -> Result<Self, JsError> {
+    pub(crate) fn compile_from_sysy(source: &str) -> Result<Self, JsError> {
         use remusys_lang::{ModuleInfo as LangModuleInfo, translate_sysy_text_into_full_ir};
         let info = match translate_sysy_text_into_full_ir(source) {
             Ok(info) => info,
@@ -78,7 +78,7 @@ impl ModuleInfo {
 
         let module = module.into();
         let mut ir_tree = IRTree::new();
-        let mut builder = IRDagBuilder::new(module.as_ref(), &names, &ir_tree);
+        let mut builder = IRTreeBuilder::new(module.as_ref(), &names, &ir_tree);
         let root = builder.build(IRTreeObjID::Module)?;
         let source = SourceBuf::from(builder.source_buf);
         ir_tree.root = root;
@@ -255,6 +255,22 @@ impl ModuleInfo {
         };
         Ok(path)
     }
+
+    pub fn do_get_path_scope(&self, path: &[IRTreeObjID]) -> Result<Option<GlobalID>, JsError> {
+        if path.len() <= 1 {
+            return Ok(None);
+        }
+        let IRTreeObjID::Global(global_id) = path[1] else {
+            return Ok(None);
+        };
+        let Some(global_obj) = global_id.try_deref_ir(&self.module) else {
+            return fmt_jserr!(Err "invalid global id in object path: {global_id:?}");
+        };
+        match global_obj {
+            GlobalObj::Func(func) if func.body.is_some() => Ok(Some(global_id)),
+            _ => Ok(None),
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -391,6 +407,13 @@ impl ModuleInfo {
         };
         Ok(scope.to_strid().to_string())
     }
+
+    /// 通过一个 IR 对象路径获取它的作用域. 这个函数和 `get_object_scope` 的区别是, 这个函数接受一个 IR 对象路径.
+    pub fn get_path_scope(&self, path: JsIRObjPath) -> Result<JsScopeID, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        self.do_get_path_scope(obj_path.as_slice())
+            .and_then(|x| Self::serialize(&x))
+    }
 }
 
 /// Module -- the graph maker
@@ -412,7 +435,7 @@ impl ModuleInfo {
     /// @return {DomTreeDt} 函数的支配树数据.
     pub fn get_func_dom_tree(&self, func_id: &str) -> Result<JsDomTreeDt, JsError> {
         let func_id = self.global_strid_as_func(func_id)?;
-        DomTreeDt::new(&self.module, func_id).and_then(|dt| Self::serialize(&dt))
+        DomTreeDt::new(self, func_id).and_then(|dt| Self::serialize(&dt))
     }
 
     /// 获取指定基本块的数据流图. 目前只支持单个基本块内的局部数据流, 不包含跨基本块的参数传递等数据流.

@@ -1,7 +1,6 @@
 import { type Node as RFNode, type NodeProps, Handle, Position } from "@xyflow/react";
 
 import type { IRTreeObjID } from "remusys-wasm-b2";
-import type { FlowEdge } from "./Edge";
 
 export type FlowNodeBase = {
   label: string | React.ReactNode;
@@ -19,6 +18,9 @@ export type FlowNode = FlowElemNode | FlowGroupNode;
 export type FlowElemNodeProps = NodeProps<FlowElemNode>;
 export type FlowGroupNodeProps = NodeProps<FlowGroupNode>;
 export type FlowNodeProps = NodeProps<FlowNode>;
+
+export const GROUP_NODE_TARGET_HANDLE_ID = "group-target";
+export const GROUP_NODE_SOURCE_HANDLE_ID = "group-source";
 
 const baseNodeStyle: React.CSSProperties = {
   width: "100%",
@@ -70,8 +72,22 @@ const GroupNode: React.FC<FlowGroupNodeProps> = ({ data }) => {
   const color = data?.bgColor || "#e0e0e0";
 
   return (
-    <div style={nodeStyle(selected, color)}>
-      {data?.label ?? "unnamed group"}
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      <Handle
+        id={GROUP_NODE_TARGET_HANDLE_ID}
+        type="target"
+        position={Position.Left}
+        style={{ opacity: 0, pointerEvents: "none" }}
+      />
+      <div style={nodeStyle(selected, color)}>
+        {data?.label ?? "unnamed group"}
+      </div>
+      <Handle
+        id={GROUP_NODE_SOURCE_HANDLE_ID}
+        type="source"
+        position={Position.Right}
+        style={{ opacity: 0, pointerEvents: "none" }}
+      />
     </div>
   );
 }
@@ -79,32 +95,4 @@ const GroupNode: React.FC<FlowGroupNodeProps> = ({ data }) => {
 export const FlowNodeTypes = {
   elemNode: ElemNode,
   groupNode: GroupNode,
-}
-
-/** Creates a graph representation of an error for visualization purposes */
-export function makeErrorGraph(error: Error): [FlowElemNode[], FlowEdge[]] {
-  const backtrace: string[] = error.stack ? error.stack.split("\n") : [];
-  const label = (
-    <div style={{ padding: "8px", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Error: {error.message}</div>
-      <div style={{ fontSize: "12px", color: "#6b7280" }}>
-        {backtrace.map((line, idx) => (<div key={idx}>{line}</div>))}
-      </div>
-    </div>
-  );
-
-  const node: FlowElemNode = {
-    id: `error-${Date.now()}`,
-    type: "elemNode",
-    data: {
-      label,
-      focused: false,
-      irObjID: null,
-      bgColor: "#ffe5e5",
-    },
-    position: { x: 0, y: 0 },
-    width: 240,
-    height: 52,
-  };
-  return [[node], []];
 }

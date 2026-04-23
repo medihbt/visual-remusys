@@ -1,9 +1,12 @@
 use remusys_ir::{
-    ir::{BlockID, FuncID, IRNameMap, ISubGlobalID, JumpTargetID, JumpTargetKind, Module},
+    ir::{
+        BlockID, FuncID, FuncNumberMap, IRNameMap, ISubGlobalID, JumpTargetID, JumpTargetKind,
+        Module, NumberOption,
+    },
     opt::CfgDfsSeq,
 };
 use serde::Serialize;
-use smol_str::SmolStr;
+use smol_str::{SmolStr, format_smolstr};
 use wasm_bindgen::JsError;
 
 use crate::fmt_jserr;
@@ -55,13 +58,14 @@ impl FuncCfgDt {
         let entry = body.entry;
 
         let edge_role = EdgeRoleJudge::new(module, func)?;
+        let numbers = FuncNumberMap::new(module, func, names, NumberOption::ignore_all());
 
         let mut nodes = Vec::with_capacity(edge_role.node_len());
         let mut edges = Vec::new();
 
         for (bb_id, block) in body.blocks.iter(&allocs.blocks) {
-            let label = match names.get_local_name(bb_id) {
-                Some(name) => name,
+            let label = match numbers.get_local_name(bb_id) {
+                Some(name) => format_smolstr!("%{name}"),
                 None => bb_id.to_strid(),
             };
 

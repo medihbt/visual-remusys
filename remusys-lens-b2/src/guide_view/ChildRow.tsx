@@ -34,7 +34,9 @@ export function ChildRow(props: ChildRowProps) {
       <div className="guide-child-row__icon">
         <TypeIcon kind={kind} size={16} focused={insideFocusPath} />
       </div>
-      <div className="guide-child-row__label">{label}</div>
+      <div className={
+        child.focusClass === "NotFocused" ? "guide-child-row__label" : "guide-child-row__label_focused"
+      }>{label}</div>
 
       {/* 简单的展开指示器 */}
       <div className="guide-child-row__indicator">

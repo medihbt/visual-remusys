@@ -23,7 +23,7 @@ export type FlowEdge = RFEdge<FlowEdgeData, "FlowEdge">;
 export type FlowEdgeProps = EdgeProps<FlowEdge>;
 
 export default function FlowEdge(props: FlowEdgeProps) {
-  const { data, style, label, labelStyle, ...otherProps } = props;
+  const { data, style, label, labelStyle, markerStart, markerEnd, interactionWidth } = props;
   if (!data)
     throw new Error("FlowEdge requires data prop with path and labelPosition");
   const {
@@ -37,10 +37,12 @@ export default function FlowEdge(props: FlowEdgeProps) {
     <BaseEdge
       path={path}
       label={label} labelX={labelPosition.x} labelY={labelPosition.y}
+      markerStart={markerStart}
+      markerEnd={markerEnd}
       style={style}
       labelStyle={labelStyle}
+      interactionWidth={interactionWidth}
       strokeWidth={strokeWidth}
-      {...otherProps}
     />
   );
 }

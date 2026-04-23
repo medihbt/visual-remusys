@@ -121,6 +121,12 @@ export function isSamePath(a: IRObjPath, b: IRObjPath): boolean {
         const ai = a[i], bi = b[i];
         if (ai.type !== bi.type) return false;
         if (ai.type === "Module" || bi.type === "Module") continue;
+        if (ai.type === "FuncArg" && bi.type === "FuncArg") {
+            const [afunc, aindex] = ai.value;
+            const [bfunc, bindex] = bi.value;
+            if (afunc !== bfunc || aindex !== bindex) return false;
+            continue;
+        }
         if (ai.value !== bi.value) return false;
     }
     return true;

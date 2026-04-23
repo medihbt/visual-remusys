@@ -63,7 +63,10 @@ function buildMenuItems(
       break;
     }
     default:
-      items = [];
+      items = [{
+        label: "聚焦此处",
+        onSelect: node => treeActions.requestFocus(node),
+      }];
       break;
   }
 

@@ -4,7 +4,7 @@ use remusys_ir::{SymbolStr, ir::*};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsError;
 
-use crate::{IRDagBuilder, IRTree, IRTreeObjID, ModuleInfo, RevLocalNameMap, SourceBuf, fmt_jserr};
+use crate::{IRTreeBuilder, IRTree, IRTreeObjID, ModuleInfo, RevLocalNameMap, SourceBuf, fmt_jserr};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -202,7 +202,7 @@ impl<'ir> IRRename<'ir> {
     fn full_update(&mut self) -> Result<(), JsError> {
         let allocs = &self.module.allocs;
 
-        let mut builder = IRDagBuilder::new(self.module, self.names, self.tree);
+        let mut builder = IRTreeBuilder::new(self.module, self.names, self.tree);
         let new_root = builder.build(IRTreeObjID::Module)?;
         *self.source = SourceBuf::from(builder.source_buf.as_str());
         self.tree.root = new_root;

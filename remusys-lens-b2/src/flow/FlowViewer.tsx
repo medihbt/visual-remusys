@@ -39,8 +39,184 @@
  * 目前暂时不做什么交互, 等后面再说. 写论文要紧.
  */
 
-import { useGraphState } from "./state";
+import { Background, Controls, MarkerType, ReactFlow, ReactFlowProvider } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import type { IRObjPath, IRTreeObjID, ModuleInfo } from "remusys-wasm-b2";
+
+import { useIRStore, type IRState } from "../ir/state";
+import { flowEdgeTypes, type FlowEdge } from "./Edge";
+import { FlowNodeTypes, type FlowNode } from "./Node";
+import FlowToolbar from "./Toolbar";
+import { getBlockDfg } from "./graphs/block-dfg";
+import { getCallGraph } from "./graphs/call-graph";
+import { getFuncCfg } from "./graphs/cfg";
+import { getDefUseGraph } from "./graphs/defuse-graph";
+import { getFuncDominance } from "./graphs/dominance";
+import { useGraphState, type GraphType } from "./state";
+
+function infoGraph(message: string): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  return {
+    nodes: [
+      {
+        id: `flow-info:${message}`,
+        type: "elemNode",
+        position: { x: 0, y: 0 },
+        width: 240,
+        height: 52,
+        data: {
+          label: message,
+          focused: false,
+          irObjID: null,
+          bgColor: "#f8fafc",
+        },
+      },
+    ],
+    edges: [],
+  };
+}
+
+function errorGraph(message: string, details?: string): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const text = details ? `${message}\n${details}` : message;
+  return {
+    nodes: [
+      {
+        id: `flow-error:${message}`,
+        type: "elemNode",
+        position: { x: 0, y: 0 },
+        width: 280,
+        height: 64,
+        data: {
+          label: text,
+          focused: false,
+          irObjID: null,
+          bgColor: "#fee2e2",
+        },
+      },
+    ],
+    edges: [],
+  };
+}
+
+async function resolveGraph(irState: IRState, graphType: GraphType): Promise<{ nodes: FlowNode[]; edges: FlowEdge[] }> {
+  if (!irState.module) {
+    return infoGraph("No module loaded");
+  }
+
+  if (graphType.type === "Error") {
+    return errorGraph(`Error: ${graphType.message}`);
+  }
+
+  if (graphType.type === "Empty") {
+    return infoGraph("No function selected");
+  }
+
+  if (graphType.type === "CallGraph") {
+    return getCallGraph(irState);
+  }
+
+  if (graphType.type === "FuncCfg") {
+    return getFuncCfg(irState, graphType.func);
+  }
+
+  if (graphType.type === "BlockDfg") {
+    return await getBlockDfg(irState, graphType.block);
+  }
+
+  if (graphType.type === "FuncDom") {
+    return getFuncDominance(irState, graphType.func);
+  }
+
+  if (graphType.type === "DefUse") {
+    return getDefUseGraph(irState, graphType.center);
+  }
+
+  return infoGraph("Unsupported graph type");
+}
+
+function objectToPath(module: ModuleInfo, obj: IRTreeObjID): IRObjPath {
+  return module.path_of_tree_object(obj);
+}
 
 export default function FlowViewer() {
+  const irState = useIRStore();
   const graphStore = useGraphState();
+
+  const [nodes, setNodes] = useState<FlowNode[]>([]);
+  const [edges, setEdges] = useState<FlowEdge[]>([]);
+
+  const resolvedGraphType = useMemo(() => graphStore.getRealGraphType(irState), [graphStore, irState]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const graph = await resolveGraph(irState, resolvedGraphType);
+        if (!alive) return;
+        setNodes(graph.nodes);
+        setEdges(graph.edges);
+      } catch (error) {
+        if (!alive) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const stack = error instanceof Error ? error.stack : undefined;
+        // console.error("flow render failed", { error, resolvedGraphType });
+        const graph = errorGraph(`Render failed: ${message}`, stack);
+        setNodes(graph.nodes);
+        setEdges(graph.edges);
+        throw error;
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [irState, resolvedGraphType]);
+
+  const onNodeDoubleClick = useCallback((event: React.MouseEvent, node: FlowNode) => {
+    event.preventDefault();
+    if (!node.data?.irObjID || !irState.module) return;
+    try {
+      irState.setFocus(objectToPath(irState.module, node.data.irObjID));
+    } catch (error) {
+      console.error("node focus failed", error);
+    }
+  }, [irState]);
+
+  const onEdgeDoubleClick = useCallback((event: React.MouseEvent, edge: FlowEdge) => {
+    event.preventDefault();
+    if (!edge.data?.irObjID || !irState.module) return;
+    try {
+      irState.setFocus(objectToPath(irState.module, edge.data.irObjID));
+    } catch (error) {
+      console.error("edge focus failed", error);
+    }
+  }, [irState]);
+
+  return (
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      <ReactFlowProvider>
+        <ReactFlow
+          fitView
+          nodes={nodes}
+          edges={edges}
+          defaultEdgeOptions={{
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              width: 18,
+              height: 18,
+              color: "#334155",
+            },
+          }}
+          nodeTypes={FlowNodeTypes}
+          edgeTypes={flowEdgeTypes}
+          onNodeDoubleClick={onNodeDoubleClick}
+          onEdgeDoubleClick={onEdgeDoubleClick}
+        >
+          <Background />
+          <Controls />
+        </ReactFlow>
+      </ReactFlowProvider>
+      <FlowToolbar />
+    </div>
+  );
 }

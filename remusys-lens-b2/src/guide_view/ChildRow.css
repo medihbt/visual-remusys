@@ -39,6 +39,15 @@
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.guide-child-row__label_focused {
+	flex: 1;
+	font-size: 13px;
+	color: #000000;
+	text-decoration: underline;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 
 .guide-child-row__indicator {
 	width: 20px;

@@ -12,7 +12,7 @@ pub use self::{
     tree::{
         IRTreeNodePath, IRTreeNodePathBuf, IRObjPath, IRObjPathBuf, IRTree, IRTreeChildren,
         IRTreeErr, IRTreeNode, IRTreeNodeID, IRTreeObjID, IRTreeRes, SourcePosIndex,
-        SourceRangeIndex, builder::IRDagBuilder,
+        SourceRangeIndex, builder::IRTreeBuilder,
     },
 };
 

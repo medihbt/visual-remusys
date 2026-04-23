@@ -17,9 +17,11 @@ pub struct DefUseGraphDt {
 impl DefUseGraphDt {
     pub fn new(ir: &ModuleInfo, inst: InstID) -> Result<Self, JsError> {
         use hashbrown::HashSet;
+        let value = ValueDt::Inst(inst);
         let self_node = DfgNode {
             id: DfgNodeID::Inst(inst),
-            value: ValueDt::Inst(inst),
+            label: value.get_name(ir.module(), ir.names())?,
+            value,
             role: DfgNodeRole::Effect,
         };
         let operands = inst.get_operands(ir.module());
@@ -29,6 +31,7 @@ impl DefUseGraphDt {
         let mut edges = Vec::with_capacity(operands.len());
 
         nodeid_set.insert(self_node.id);
+        nodes.push(self_node.clone());
         for use_id in operands {
             let operand = ValueDt::from(use_id.get_operand(ir.module()));
             let node_id = match operand {
@@ -42,6 +45,7 @@ impl DefUseGraphDt {
             if nodeid_set.insert(node_id) {
                 nodes.push(DfgNode {
                     id: node_id,
+                    label: operand.get_name(ir.module(), ir.names())?,
                     value: operand,
                     role: DfgNodeRole::Income,
                 });
@@ -70,6 +74,7 @@ impl DefUseGraphDt {
             if nodeid_set.insert(user_nodeid) {
                 nodes.push(DfgNode {
                     id: user_nodeid,
+                    label: user_value.get_name(ir.module(), ir.names())?,
                     value: user_value,
                     role: DfgNodeRole::Outgo,
                 });

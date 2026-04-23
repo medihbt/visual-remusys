@@ -56,6 +56,7 @@ use std::{
     ops::Range,
 };
 
+use hashbrown::HashMap as BrownMap;
 use mtb_entity_slab::{EntityAlloc, GenIndex, IEntityAllocID, IPoliciedID, IndexedID, entity_id};
 use remusys_ir::ir::{
     BlockID, FuncID, GlobalID, GlobalObj, ISubGlobalID, ISubInst, ISubInstID, InstID, InstObj,
@@ -244,8 +245,10 @@ pub type SourceRangeIndex = Range<SourcePosIndex>;
 
 pub type IRTreeChildren = SmallVec<[IRTreeNodeID; 4]>;
 #[entity_id(IRTreeNodeID, backend = index)]
+#[derive(Debug)]
 pub struct IRTreeNode {
     parent: Cell<Option<IRTreeNodeID>>,
+    children_map: BrownMap<IRTreeObjID, usize>,
     pub obj: IRTreeObjID,
     pub children: IRTreeChildren,
     /// 结点相对父结点在源代码中的位置. 采用相对位置是为了减少结点更新.
@@ -258,20 +261,41 @@ impl IRTreeNode {
             parent: Cell::new(None),
             obj,
             children: SmallVec::new(),
+            children_map: BrownMap::new(),
             pos_delta,
         }
     }
     pub fn with_children(
+        tree: &IRTree,
         obj: IRTreeObjID,
         pos_delta: SourceRangeIndex,
         children: IRTreeChildren,
     ) -> Self {
+        let children_map = if children.len() < 8 {
+            BrownMap::new()
+        } else {
+            let mut map = BrownMap::with_capacity(children.len());
+            for (idx, child_id) in children.iter().enumerate() {
+                let child_obj = child_id.obj(tree);
+                map.insert(child_obj, idx);
+            }
+            map
+        };
         Self {
             parent: Cell::new(None),
             obj,
             children,
+            children_map,
             pos_delta,
         }
+    }
+
+    pub fn info_str(&self, ir: &ModuleInfo) -> Result<String, JsError> {
+        let name = self.obj.get_name(ir)?;
+        Ok(format!(
+            "obj: {name}\npos_begin: {:?}\npos_end: {:?}",
+            self.pos_delta.start, self.pos_delta.end
+        ))
     }
 
     pub fn get_parent(&self) -> Option<IRTreeNodeID> {
@@ -279,6 +303,21 @@ impl IRTreeNode {
     }
     pub fn set_parent(&self, parent_id: IRTreeNodeID) {
         self.parent.set(Some(parent_id));
+    }
+
+    pub fn find_child(&self, tree: &IRTree, obj: IRTreeObjID) -> Option<IRTreeNodeID> {
+        if self.children_map.is_empty() {
+            for &child_id in self.children.iter() {
+                if child_id.deref(tree).obj == obj {
+                    return Some(child_id);
+                }
+            }
+            None
+        } else {
+            self.children_map
+                .get(&obj)
+                .and_then(|&idx| self.children.get(idx).cloned())
+        }
     }
 }
 
@@ -320,7 +359,7 @@ impl IRTreeNodeID {
     ) -> Self {
         Self::allocate(
             tree,
-            IRTreeNode::with_children(obj, pos_delta, children.into()),
+            IRTreeNode::with_children(tree, obj, pos_delta, children.into()),
         )
     }
     pub fn allocate(tree: &IRTree, node: IRTreeNode) -> Self {
@@ -380,6 +419,10 @@ impl IRTreeNodeID {
             }
         }
         None
+    }
+    /// 根据子结点的 obj 找到对应的子结点 ID. 如果没有找到, 返回 None.
+    pub fn find_child_by_obj(self, tree: &IRTree, obj: IRTreeObjID) -> Option<IRTreeNodeID> {
+        self.deref(tree).find_child(tree, obj)
     }
 
     /// 树拷贝操作: 把该子树拷贝一份, 修改新子树的源码位置.
@@ -449,7 +492,7 @@ impl IRTree {
         do_clone(self, node_id)
     }
 
-    pub fn print_to_dot(&self, root: IRTreeNodeID) -> String {
+    pub fn print_to_dot(&self, ir: &ModuleInfo, root: IRTreeNodeID) -> Result<String, JsError> {
         use std::fmt::Write;
         let mut output = String::from("digraph IRDag {\n  rankdir=LR;\n  node [shape=box];\n");
         let mut visited = HashSet::new();
@@ -461,7 +504,8 @@ impl IRTree {
             visited.insert(node_id);
             let node = node_id.deref(self);
             let node_id = node_id.into_gen_index().0.get();
-            writeln!(output, "  node_{:x} [label=\"{:?}\"];", node_id, node.obj).unwrap();
+            let label = node.info_str(ir)?;
+            writeln!(output, "  node_{:x} [label={:?}];", node_id, label).unwrap();
             for &child_id in node.children.iter() {
                 stack.push(child_id);
                 let child_id_num = child_id.into_gen_index().0.get();
@@ -469,23 +513,23 @@ impl IRTree {
             }
         }
         output.push_str("}\n");
-        output
+        Ok(output)
     }
 
     pub fn resolve_path(&self, obj_path: &IRObjPath) -> Result<IRTreeNodePathBuf, JsError> {
         let mut node_path = IRTreeNodePathBuf::with_capacity(obj_path.len());
         let mut current_node_id = self.root;
+
         let mut obj_path_iter = obj_path.iter();
         if obj_path_iter.next() != Some(&IRTreeObjID::Module) {
             return fmt_jserr!(Err "obj_path should start with Module");
         }
+        node_path.push(current_node_id);
+
         for obj_id in obj_path_iter {
             let current_node = current_node_id.deref(self);
-            let found_child_id = current_node
-                .children
-                .iter()
-                .find(|child_id| child_id.deref(self).obj == *obj_id);
-            if let Some(&child_id) = found_child_id {
+            let found_child_id = current_node.find_child(self, *obj_id);
+            if let Some(child_id) = found_child_id {
                 current_node_id = child_id;
                 node_path.push(child_id);
             } else {
@@ -527,8 +571,10 @@ impl IRTree {
         let mut end = pos;
         for &node_id in node_path {
             let node = node_id.deref(self);
-            pos = pos.advance(node.pos_delta.start);
-            end = end.advance(node.pos_delta.end);
+            let new_pos = pos.advance(node.pos_delta.start);
+            let new_end = pos.advance(node.pos_delta.end);
+            pos = new_pos;
+            end = new_end;
         }
         Ok(pos..end)
     }
@@ -648,9 +694,8 @@ impl IRTreeCursor {
         Ok(ret)
     }
 
-    pub fn do_goto_child(&mut self, ir: &ModuleInfo, node: IRTreeNodeID) -> Result<(), JsError> {
+    pub fn do_goto_child(&mut self, tree: &IRTree, node: IRTreeNodeID) -> Result<(), JsError> {
         let (last_node, last_range) = self.get_last()?;
-        let tree = ir.ir_tree();
         js_assert!(Some(last_node) == node.get_parent(tree))?;
 
         let range_delta = node.pos_delta(tree);
@@ -729,15 +774,11 @@ impl IRTreeCursor {
 
         let (last_node, _) = self.get_last()?;
         let tree = ir.ir_tree();
-        let Some(&child_node) = last_node
-            .children(tree)
-            .iter()
-            .find(|&&child| child.obj(tree) == obj)
-        else {
+        let Some(child_node) = last_node.find_child_by_obj(tree, obj) else {
             return fmt_jserr!(Err "target object is not a direct child of current node: {obj:?}");
         };
 
-        self.do_goto_child(ir, child_node)
+        self.do_goto_child(&ir.ir_tree, child_node)
     }
 
     /// 检查当前结点是否有某个对象 ID 的直接子结点. 这个操作需要先检查所有权, 然后检查子结点是否真的属于当前结点.
@@ -747,10 +788,7 @@ impl IRTreeCursor {
 
         let (last_node, _) = self.get_last()?;
         let tree = ir.ir_tree();
-        Ok(last_node
-            .children(tree)
-            .iter()
-            .any(|&child| child.obj(tree) == obj))
+        Ok(last_node.find_child_by_obj(tree, obj).is_some())
     }
 
     /// 根据当前结点路径, 生成对应的对象路径. 这个操作需要先检查所有权, 然后把对象路径序列化成 JS 对象.

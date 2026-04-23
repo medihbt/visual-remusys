@@ -1,4 +1,4 @@
-use std::{cell::Cell, collections::HashMap, fmt::Write, ops::Range, rc::Rc, str};
+use std::{collections::HashMap, fmt::Write, ops::Range, rc::Rc, str};
 
 use remusys_ir::{
     SymbolStr,
@@ -9,7 +9,10 @@ use smallvec::{SmallVec, smallvec};
 use smol_str::{SmolStr, format_smolstr};
 use wasm_bindgen::JsError;
 
-use crate::{IRTreeChildren, IRTreeNode, IRTreeNodeID, IRTreeObjID, IRTree, SourcePosIndex, fmt_jserr};
+use crate::{
+    IRTree, IRTreeChildren, IRTreeNode, IRTreeNodeID, IRTreeObjID, SourcePosIndex, fmt_jserr,
+    js_assert,
+};
 
 #[derive(Debug, Clone)]
 struct TreeMapNode {
@@ -17,7 +20,7 @@ struct TreeMapNode {
     src: Range<usize>,
 }
 
-pub struct IRDagBuilder<'ir, 'name> {
+pub struct IRTreeBuilder<'ir, 'name> {
     pub source_buf: String,
     pub indent: usize,
     pub curr_pos: SourcePosIndex,
@@ -32,24 +35,15 @@ pub struct IRDagBuilder<'ir, 'name> {
     expr_str: HashMap<ExprID, Option<SmolStr>>,
 }
 
-impl<'ir, 'name> std::fmt::Write for IRDagBuilder<'ir, 'name> {
+impl<'ir, 'name> std::fmt::Write for IRTreeBuilder<'ir, 'name> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         self.source_buf.push_str(s);
-        let mut pos = self.curr_pos;
-        for c in s.chars() {
-            if c == '\n' {
-                pos.line += 1;
-                pos.col_byte = 0;
-            } else {
-                pos.col_byte += c.len_utf8() as u32;
-            }
-        }
-        self.curr_pos = pos;
+        self.curr_pos = Self::bump_pos(self.curr_pos, s);
         Ok(())
     }
 }
 
-impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
+impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
     pub fn new(module: &'ir Module, names: &'name IRNameMap, tree: &'ir IRTree) -> Self {
         Self {
             source_buf: String::new(),
@@ -95,7 +89,7 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
     }
 
     pub fn build(&mut self, obj: IRTreeObjID) -> Result<IRTreeNodeID, JsError> {
-        match obj {
+        let res = match obj {
             IRTreeObjID::Module => self.fmt_module(),
             IRTreeObjID::Global(globl) => self.fmt_global(globl),
             IRTreeObjID::FuncArg(func, idx) => {
@@ -118,7 +112,13 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
                 let func_obj = func.deref_ir(allocs);
                 self.fmt_func_header(func, func_obj)
             }
-        }
+        }?;
+        js_assert!(
+            self.pos_stack.len() == 1,
+            "Internal error: pos_stack should have exactly one element at the end of build, but has {}",
+            self.pos_stack.len()
+        )?;
+        Ok(res)
     }
 
     fn type_name(&mut self, ty: impl IValType) -> SymbolStr {
@@ -161,8 +161,21 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         self.write_indent()
     }
 
+    fn bump_pos(mut pos: SourcePosIndex, s: &str) -> SourcePosIndex {
+        for c in s.chars() {
+            if c == '\n' {
+                pos.line += 1;
+                pos.col_byte = 0;
+            } else {
+                pos.col_byte += c.len_utf8() as u32;
+            }
+        }
+        pos
+    }
+
     fn src_push_range(&mut self, src: Range<usize>) {
-        self.source_buf.extend_from_within(src);
+        self.source_buf.extend_from_within(src.clone());
+        self.curr_pos = Self::bump_pos(self.curr_pos, &self.source_buf[src]);
     }
 
     fn fmt_module(&mut self) -> Result<IRTreeNodeID, JsError> {
@@ -175,12 +188,12 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
             let child = self.fmt_global(gid)?;
             children.push(child);
         }
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Module,
-            pos_delta: begin..self.relative_pos()?,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Module,
+            begin..self.relative_pos()?,
             children,
-        };
+        );
         let node_id = IRTreeNodeID::allocate(self.tree, node);
         Ok(node_id)
     }
@@ -220,16 +233,16 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
     }
 
     fn fmt_block_label_line(&mut self, label: BlockID) -> Result<IRTreeNodeID, JsError> {
-        let name = self.get_local_name(label);
+        let name = self.get_local_name(label)?;
         let begin_pos = self.relative_pos()?;
         write!(self, "{name}:")?;
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::BlockIdent(label),
-            pos_delta: begin_pos..end_pos,
-            children: IRTreeChildren::new(),
-        };
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::BlockIdent(label),
+            begin_pos..end_pos,
+            IRTreeChildren::new(),
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
     fn fmt_func_arg(&mut self, func: FuncID, arg_idx: u32) -> Result<IRTreeNodeID, JsError> {
@@ -241,15 +254,15 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
             return fmt_jserr!(Err "External function {func:?} is not supported");
         };
         let begin_pos = self.relative_pos()?;
-        let arg_name = self.get_local_name(FuncArgID(func, arg_idx));
+        let arg_name = self.get_local_name(FuncArgID(func, arg_idx))?;
         write!(self, "%{arg_name}")?;
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::FuncArg(func.raw_into(), arg_idx),
-            pos_delta: begin_pos..end_pos,
-            children: IRTreeChildren::new(),
-        };
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::FuncArg(func.raw_into(), arg_idx),
+            begin_pos..end_pos,
+            IRTreeChildren::new(),
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
 
@@ -277,15 +290,15 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
                 ValueSSA::ConstData(data) => self.fmt_const_data(data)?,
                 ValueSSA::ConstExpr(expr_id) => children = self.fmt_expr(expr_id)?,
                 ValueSSA::FuncArg(func_id, arg_idx) => {
-                    let name = self.get_local_name(FuncArgID(func_id, arg_idx));
+                    let name = self.get_local_name(FuncArgID(func_id, arg_idx))?;
                     write!(self, "%{name}")?;
                 }
                 ValueSSA::Block(block_id) => {
-                    let name = self.get_local_name(block_id);
+                    let name = self.get_local_name(ValueSSA::Block(block_id))?;
                     write!(self, "%{name}")?;
                 }
                 ValueSSA::Inst(inst_id) => {
-                    let name = self.get_local_name(ValueSSA::Inst(inst_id));
+                    let name = self.get_local_name(ValueSSA::Inst(inst_id))?;
                     write!(self, "%{name}")?;
                 }
                 ValueSSA::Global(global_id) => {
@@ -299,12 +312,12 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         let children = children?;
         let end_pos = self.relative_pos()?;
         let end_byte = self.source_buf.len();
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Use(use_id),
-            pos_delta: begin_pos..end_pos,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Use(use_id),
+            begin_pos..end_pos,
             children,
-        };
+        );
         let node_id = IRTreeNodeID::allocate(self.tree, node);
         self.tree_map.insert(
             use_id,
@@ -540,12 +553,12 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         let children = children?;
 
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Global(id),
-            pos_delta: begin_pos..end_pos,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Global(id.raw_into()),
+            begin_pos..end_pos,
             children,
-        };
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
 
@@ -614,15 +627,15 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
             }
 
             let arg_begin = self.relative_pos()?;
-            let arg_name = self.get_local_name(FuncArgID(id, arg.index));
-            write!(self, "%{arg_name}")?;
+            let arg_name = self.get_local_name(FuncArgID(id, arg.index))?;
+            write!(self, " %{arg_name}")?;
             let arg_end = self.relative_pos()?;
-            let arg_node = IRTreeNode {
-                parent: Cell::new(None),
-                obj: IRTreeObjID::FuncArg(id.raw_into(), arg.index),
-                pos_delta: arg_begin..arg_end,
-                children: IRTreeChildren::new(),
-            };
+            let arg_node = IRTreeNode::with_children(
+                self.tree,
+                IRTreeObjID::FuncArg(id.raw_into(), arg.index),
+                arg_begin..arg_end,
+                IRTreeChildren::new(),
+            );
             children.push(IRTreeNodeID::allocate(self.tree, arg_node));
         }
         if func.is_vararg {
@@ -633,20 +646,20 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
 
         self.end_pos();
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::FuncHeader(id.raw_into()),
-            pos_delta: begin_pos..end_pos,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::FuncHeader(id.raw_into()),
+            begin_pos..end_pos,
             children,
-        };
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
 
     fn fmt_func(&mut self, id: FuncID, func: &FuncObj) -> Result<IRTreeNodeID, JsError> {
         let begin_pos = self.relative_pos()?;
         self.begin_pos();
-        let header_node = self.fmt_func_header(id, func)?;
         let scope = self.curr_scope.replace(id);
+        let header_node = self.fmt_func_header(id, func)?;
         let children = match &func.body {
             None => smallvec![header_node],
             Some(body) => self.fmt_func_body(header_node, body)?,
@@ -654,12 +667,12 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         self.curr_scope = scope;
         self.end_pos();
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Global(id.raw_into()),
-            pos_delta: begin_pos..end_pos,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Global(id.raw_into()),
+            begin_pos..end_pos,
             children,
-        };
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
     fn fmt_func_body(
@@ -681,45 +694,49 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
     }
 }
 
-impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
-    fn get_local_name(&mut self, val: impl IValueConvert) -> SmolStr {
-        if let Some(name) = self.try_local_name(val) {
-            return name;
+impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
+    fn get_local_name(&mut self, val: impl IValueConvert) -> Result<SmolStr, JsError> {
+        if let Some(name) = self.try_local_name(val)? {
+            return Ok(name);
         }
-        match val.into_value() {
+        let name = match val.into_value() {
             ValueSSA::Block(bb) => bb.to_strid(),
             ValueSSA::Inst(inst) => inst.to_strid(),
             ValueSSA::FuncArg(func, arg) => {
                 format_smolstr!("FuncArg({},{arg})", func.raw_into().to_strid())
             }
             val => format_smolstr!("<unnamed {val:?}>"),
-        }
+        };
+        Ok(name)
     }
 
-    fn try_local_name(&mut self, val: impl IValueConvert) -> Option<SmolStr> {
+    fn try_local_name(&mut self, val: impl IValueConvert) -> Result<Option<SmolStr>, JsError> {
         let value = val.into_value();
         if let Some(local_name) = self.names.get_local_name(value) {
-            return Some(local_name);
+            return Ok(Some(local_name));
         }
-        let scope = self.curr_scope?;
-        let num_map = self.make_numbers(scope).ok()?;
-        num_map.get_local_name(value)
+        let scope = match self.curr_scope {
+            Some(func) => func,
+            None => return Ok(None),
+        };
+        let num_map = self.make_numbers(scope)?;
+        Ok(num_map.get_local_name(value))
     }
 
     fn fmt_label(&mut self, jt: JumpTargetID) -> Result<IRTreeNodeID, JsError> {
         let begin_pos = self.relative_pos()?;
         let allocs = &self.module.allocs;
         let name = match jt.get_block(allocs) {
-            Some(block) => self.get_local_name(ValueSSA::Block(block)),
+            Some(block) => self.get_local_name(ValueSSA::Block(block))?,
             None => SmolStr::new_inline("none"),
         };
         write!(self, "%{name}")?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::JumpTarget(jt),
-            pos_delta: begin_pos..self.relative_pos()?,
-            children: IRTreeChildren::new(),
-        };
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::JumpTarget(jt),
+            begin_pos..self.relative_pos()?,
+            IRTreeChildren::new(),
+        );
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
 
@@ -732,14 +749,19 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         let begin_pos = self.relative_pos()?;
         self.begin_pos();
 
-        if let Some(name) = self.try_local_name(inst_id) {
+        if let Some(name) = self.try_local_name(inst_id)? {
             write!(self, "%{name} = ")?;
         }
+        let mut should_emit_node = true;
         let children = match inst {
-            InstObj::GuideNode(_) => return Ok(None),
+            InstObj::GuideNode(_) => {
+                should_emit_node = false;
+                smallvec![]
+            }
             InstObj::PhiInstEnd(_) => {
                 self.write_str("; ==== Phi Section End ====")?;
-                return Ok(None);
+                should_emit_node = false;
+                smallvec![]
             }
             InstObj::Unreachable(_) => {
                 self.write_str("unreachable")?;
@@ -843,15 +865,19 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
             InstObj::Phi(phi_inst) => self.fmt_phi_inst(phi_inst)?,
             InstObj::Select(select_inst) => self.fmt_select_inst(select_inst)?,
         };
-        let end_pos = self.relative_pos()?;
         self.end_pos();
+        let end_pos = self.relative_pos()?;
 
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Inst(inst_id),
-            pos_delta: begin_pos..end_pos,
+        if !should_emit_node {
+            return Ok(None);
+        }
+
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Inst(inst_id),
+            begin_pos..end_pos,
             children,
-        };
+        );
         let node_id = IRTreeNodeID::allocate(self.tree, node);
         Ok(Some(node_id))
     }
@@ -1058,7 +1084,7 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
     }
 }
 
-impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
+impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
     fn do_fmt_block(
         &mut self,
         block_id: BlockID,
@@ -1086,12 +1112,12 @@ impl<'ir, 'name> IRDagBuilder<'ir, 'name> {
         self.end_pos();
 
         let end_pos = self.relative_pos()?;
-        let node = IRTreeNode {
-            parent: Cell::new(None),
-            obj: IRTreeObjID::Block(block_id),
-            pos_delta: begin_pos..end_pos,
+        let node = IRTreeNode::with_children(
+            self.tree,
+            IRTreeObjID::Block(block_id),
+            begin_pos..end_pos,
             children,
-        };
+        );
         let node_id = IRTreeNodeID::allocate(self.tree, node);
         Ok(node_id)
     }

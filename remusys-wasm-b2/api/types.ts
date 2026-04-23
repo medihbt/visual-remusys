@@ -16,6 +16,7 @@ export type PoolStrID =
     | ExprID
     | UseID
     | JumpTargetID;
+export type ScopeID = GlobalID | undefined;
 
 export interface MonacoSrcPos {
     // 1-based line number
@@ -128,13 +129,7 @@ export interface FuncCfgDt {
     edges: CfgEdgeDt[];
 }
 
-export type DfgNodeID =
-    | InstID
-    | ExprID
-    | BlockID
-    | GlobalID
-    | UseID
-    | `FuncArg(${GlobalID}, ${number})`;
+export type DfgNodeID = `node:${string}`;
 
 export type DfgNodeRole =
     | "Income"
@@ -146,6 +141,7 @@ export type DfgNodeRole =
 
 export interface DfgNode {
     id: DfgNodeID;
+    label: string;
     value: ValueDt;
     role: DfgNodeRole;
 }
@@ -191,9 +187,18 @@ export interface CallGraphDt {
     edges: CallGraphEdgeDt[];
 }
 
+export interface DomTreeNode {
+    id: BlockID;
+    label: string;
+}
+export interface DomTreeEdge {
+    from: BlockID;
+    to: BlockID;
+}
+
 export interface DomTreeDt {
-    nodes: BlockID[];
-    edges: Array<[BlockID, BlockID]>;
+    nodes: DomTreeNode[];
+    edges: DomTreeEdge[];
 }
 
 export type RenameRes =

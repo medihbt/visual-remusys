@@ -228,13 +228,13 @@ impl ModuleInfo {
             .names
             .funcs
             .entry(func)
-            .or_insert_with(|| vec![None; arg_count as usize].into_boxed_slice());
+            .or_insert_with(|| vec![None; arg_count as usize]);
 
         // 确保数组大小正确
         if args.len() <= index as usize {
             let mut new_args = args.to_vec();
             new_args.resize(index as usize + 1, None);
-            *args = new_args.into_boxed_slice();
+            *args = new_args;
         }
 
         // 检查当前名称是否相同

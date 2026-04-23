@@ -216,7 +216,6 @@ export function expandNode(controller: GuideTreeController, irStore: IRState, no
     const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
     const path = pathOfNode(node);
     const module = irStore.getModule();
-    console.log("Expanding node at path:", path);
     expandTree.expand_one(module, path);
     controller.moduleId = moduleId;
     controller.expandTree = expandTree;

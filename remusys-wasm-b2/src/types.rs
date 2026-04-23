@@ -11,6 +11,9 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "GlobalID")]
     pub type GlobalID;
 
+    #[wasm_bindgen(typescript_type = "ScopeID")]
+    pub type JsScopeID;
+
     #[wasm_bindgen(typescript_type = "BlockID")]
     pub type BlockID;
 

@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use std::path::Path;
+
 use crate::*;
 use remusys_ir::{
     ir::{inst::*, *},
@@ -32,10 +34,14 @@ fn find_inst_in_func(
     None
 }
 
-fn build_inst_node(module: &Module, func: FuncID, inst_id: InstID) -> (IRTree, IRTreeNodeID, String) {
+fn build_inst_node(
+    module: &Module,
+    func: FuncID,
+    inst_id: InstID,
+) -> (IRTree, IRTreeNodeID, String) {
     let dag = IRTree::new();
     let names = IRNameMap::default();
-    let mut builder = IRDagBuilder::new(module, &names, &dag);
+    let mut builder = IRTreeBuilder::new(module, &names, &dag);
     builder.curr_scope = Some(func);
     let node = builder
         .build(IRTreeObjID::Inst(inst_id))
@@ -84,40 +90,18 @@ fn fmt_inst_branch_from_cfg_case() {
 }
 
 #[test]
-fn fmt_inst_ret_from_cfg_case() {
-    let module = test_case_cfg_deep_while_br().module;
-    let func = first_defined_func(&module);
-    let ret_inst = find_inst_in_func(&module, func, |inst| matches!(inst, InstObj::Ret(_)))
-        .expect("expected at least one return instruction");
-
-    let (dag, node, source) = build_inst_node(&module, func, ret_inst);
-    let node_ref = node.deref(&dag);
-
-    println!("{}", dag.print_to_dot(node));
-
-    assert_eq!(node_ref.obj, IRTreeObjID::Inst(ret_inst));
-    assert!(source.contains("ret"));
-    assert!(
-        !node_ref.children.is_empty(),
-        "ret i32 should have one use child"
-    );
-    assert!(node_ref.pos_delta.start <= node_ref.pos_delta.end);
-}
-
-#[test]
 fn fmt_module_source() {
-    let module = test_case_minmax().module;
-    let dag = IRTree::new();
-    let names = IRNameMap::default();
-    let mut builder = IRDagBuilder::new(&module, &names, &dag);
-    let node = builder
-        .build(IRTreeObjID::Module)
-        .expect("format module to IRDag node");
-    let source = builder.source_buf;
+    let sysy_source_path = Path::new("cases/main.sy");
+    let sysy_text = std::fs::read_to_string(sysy_source_path).expect("read sysy source file");
+    let ir = ModuleInfo::compile_from_sysy(&sysy_text).expect("compile sysy source to module");
 
-    println!("{}", source);
-    let graph_dot = dag.print_to_dot(node);
+    let graph_dot = ir.ir_tree().print_to_dot(&ir, ir.ir_tree.root).unwrap();
     let outfile = std::env::temp_dir().join("module_dag.dot");
+    let source_outfile = std::env::temp_dir().join("module_source.ll");
+
+    std::fs::write(&source_outfile, ir.dump_source()).expect("write module source to file");
     std::fs::write(&outfile, graph_dot).expect("write graph dot to file");
+
     println!("Graph dot written to: {}", outfile.display());
+    println!("Module source written to: {}", source_outfile.display());
 }

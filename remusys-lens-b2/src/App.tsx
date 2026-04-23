@@ -5,23 +5,10 @@ import "./App.css";
 import AppMenu from "./AppMenu";
 import { useIRStore } from "./ir/state";
 import FileLoader from "./FileLoader";
-import { useGraphState } from "./flow/state";
+import FlowViewer from "./flow/FlowViewer";
 
 import "@xyflow/react/dist/style.css";
-
-interface PanePlaceholderProps {
-  title: string;
-  description?: string | React.ReactNode;
-}
-
-function PanePlaceholder({ title, description = "施工中" }: PanePlaceholderProps) {
-  return (
-    <div className="pane-placeholder">
-      <h3>{title}</h3>
-      <p>{description}</p>
-    </div>
-  );
-}
+import SourceView from "./source_view/SourceView";
 
 function MainPage() {
   const compileModule = useIRStore((st) => st.compile);
@@ -37,9 +24,7 @@ function MainPage() {
             <section className="panel-left">
               <ReflexContainer orientation="horizontal" style={{ height: "100%" }}>
                 <ReflexElement minSize={50} flex={60}>
-                  <div className="left-top">
-                    <PanePlaceholder title="源码编辑器" />
-                  </div>
+                  <SourceView />
                 </ReflexElement>
 
                 <ReflexSplitter />
@@ -54,7 +39,7 @@ function MainPage() {
           <ReflexSplitter />
 
           <ReflexElement minSize={50} flex={60}>
-            <PanePlaceholder title="图视图" description={`当前图类型: ${JSON.stringify(useGraphState().graphType)}`} />
+            <FlowViewer />
           </ReflexElement>
         </ReflexContainer>
       </main>
