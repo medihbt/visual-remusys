@@ -36,7 +36,8 @@
  * 
  * ## 交互
  * 
- * 目前暂时不做什么交互, 等后面再说. 写论文要紧.
+ * 目前的交互比较简单，双击结点时会尝试聚焦到这个结点对应的 IR 实体上（如果有的话）。
+ * 双击边时会尝试聚焦到这个边对应的 IR 实体上（如果有的话）。更多功能等待未来开发。
  */
 
 import { Background, Controls, MarkerType, ReactFlow, ReactFlowProvider } from "@xyflow/react";

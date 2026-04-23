@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useState } from "react";
+import type { SourceTy } from "remusys-wasm-b2";
 import { ReflexContainer, ReflexElement, ReflexSplitter } from "react-reflex";
 import "react-reflex/styles.css";
 import GuideView from "./guide_view/GuideView";
@@ -9,13 +11,15 @@ import FlowViewer from "./flow/FlowViewer";
 
 import "@xyflow/react/dist/style.css";
 import SourceView from "./source_view/SourceView";
+import { clearCachedSource, loadCachedSource, saveCachedSource } from "./source-cache";
 
-function MainPage() {
-  const compileModule = useIRStore((st) => st.compile);
+type LoadAction = (mode: SourceTy, text: string, filename: string) => void;
+
+function MainPage({ onLoad }: { onLoad: LoadAction }) {
   return (
     <div className="app-root">
       <header>
-        <AppMenu onLoad={compileModule} />
+        <AppMenu onLoad={onLoad} />
       </header>
 
       <main className="app-main">
@@ -48,9 +52,38 @@ function MainPage() {
 }
 
 function App() {
-  const module = useIRStore(s => s.module);
-  const onLoad = useIRStore(s => s.compile);
-  return module ? <MainPage /> : <FileLoader onLoad={onLoad} />;
+  const module = useIRStore((s) => s.module);
+  const compile = useIRStore((s) => s.compile);
+  const [bootChecked, setBootChecked] = useState(false);
+
+  const handleLoad = useCallback<LoadAction>((mode, text, filename) => {
+    compile(mode, text, filename);
+    saveCachedSource({ type: mode, text, filename });
+  }, [compile]);
+
+  useEffect(() => {
+    if (bootChecked) return;
+    const cached = loadCachedSource();
+    if (!cached) {
+      setBootChecked(true);
+      return;
+    }
+
+    try {
+      compile(cached.type, cached.text, cached.filename);
+    } catch (error) {
+      clearCachedSource();
+      console.warn("Failed to restore cached source, fallback to FileLoader", error);
+    } finally {
+      setBootChecked(true);
+    }
+  }, [bootChecked, compile]);
+
+  if (!bootChecked && !module) {
+    return null;
+  }
+
+  return module ? <MainPage onLoad={handleLoad} /> : <FileLoader onLoad={handleLoad} />;
 }
 
 export default App;

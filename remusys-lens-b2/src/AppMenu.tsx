@@ -47,7 +47,7 @@ Features:
 `;
 
 export type TopMenuActions = {
-  onLoad: (mode: SourceTy, text: string) => void;
+  onLoad: (mode: SourceTy, text: string, filename: string) => void;
 };
 export default function AppMenu(actions: TopMenuActions) {
   function about() {
@@ -64,9 +64,6 @@ export default function AppMenu(actions: TopMenuActions) {
     };
     input.click();
   }
-  function save() {
-    alert("等待实现: 保存当前存档到浏览器...")
-  }
 
   return (
     <div style={menuStyle}>
@@ -75,9 +72,6 @@ export default function AppMenu(actions: TopMenuActions) {
         <MenuItems style={itemsStyle}>
           <MenuItem>
             {({ focus }) => (<div onClick={open} style={itemStyle(focus)}>打开...</div>)}
-          </MenuItem>
-          <MenuItem>
-            {({ focus }) => (<div onClick={save} style={itemStyle(focus)}>保存...</div>)}
           </MenuItem>
         </MenuItems>
       </Menu>
