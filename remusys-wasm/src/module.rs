@@ -1,600 +1,470 @@
-use remusys_ir::ir::{inst::*, *};
-use remusys_ir_parser::ModuleWithInfo;
-use smol_str::{SmolStr, format_smolstr};
-use std::collections::HashMap;
 use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
+    collections::HashMap,
+    ops::Range,
+    path::Path,
+    str::FromStr,
+    sync::atomic::{AtomicUsize, Ordering},
 };
-use wasm_bindgen::prelude::*;
+
+use remusys_ir::{
+    SymbolStr,
+    ir::{
+        BlockID, FuncArgID, FuncID, GlobalID, GlobalObj, IRNameMap, ISubGlobalID, ISubInst,
+        ISubInstID, InstID, Module, UserID,
+    },
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 use crate::{
-    dto::*,
+    CallGraphDt, DomTreeDt, IRTreeBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
+    dto::{IRTreeNodeDt, cfg::FuncCfgDt, defuse_graph::DefUseGraphDt, dfg::BlockDfg},
     fmt_jserr,
-    graphs::{call_graph::CallGraphDt, cfg::DomTreeDt, dfg::BlockDfgDt},
-    mapping::*,
+    rename::IRRename,
+    types::{
+        JsBlockDfg, JsCallGraphDt, JsDefUseGraph, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath,
+        JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsScopeID, JsTreeObjID,
+    },
 };
 
+pub mod rename;
+pub mod source_buf;
+
+/// Monaco-compatible source position, using 1-based line and column numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonacoSrcPos {
+    /// 1-based line number
+    pub line: u32,
+    /// 1-based column number (in UTF-16 code units)
+    pub column: u32,
+}
+pub type MonacoSrcRange = std::ops::Range<MonacoSrcPos>;
+impl Default for MonacoSrcPos {
+    fn default() -> Self {
+        Self { line: 1, column: 1 }
+    }
+}
+
+pub type RevLocalNameMap = HashMap<SymbolStr, IRTreeObjID>;
+#[wasm_bindgen]
 pub struct ModuleInfo {
-    pub module: Box<Module>,
-    pub names: IRNameMap,
-    pub overview: RefCell<Option<Rc<OverviewInfo>>>,
-}
-
-pub struct OverviewInfo {
-    pub src: SmolStr,
-    pub global_map: HashMap<GlobalID, IRSourceRange>,
-    pub lines: Box<[usize]>,
-}
-
-impl OverviewInfo {
-    pub fn correct_pos(&self, pos: SourcePos) -> SourcePos {
-        let line_idx = pos.line.saturating_sub(1);
-        let start_byte = self.lines.get(line_idx).copied().unwrap_or(self.src.len());
-        let end_byte = self
-            .lines
-            .get(line_idx + 1)
-            .copied()
-            .unwrap_or(self.src.len());
-        let line_src = &self.src[start_byte..end_byte];
-        let col = line_src
-            .chars()
-            .take(pos.column)
-            .map(|c| c.len_utf16())
-            .sum();
-        SourcePos {
-            line: pos.line,
-            column: col,
-        }
-    }
-    pub fn correct_loc(&self, loc: SourceLoc) -> SourceLoc {
-        SourceLoc {
-            begin: self.correct_pos(loc.begin),
-            end: self.correct_pos(loc.end),
-        }
-    }
-    pub fn map_range_to_loc(&self, range: IRSourceRange) -> SourceLoc {
-        let (begin_pos, end_pos) = range;
-        self.correct_loc(SourceLoc {
-            begin: SourcePos {
-                line: begin_pos.line,
-                column: begin_pos.column_nchars,
-            },
-            end: SourcePos {
-                line: end_pos.line,
-                column: end_pos.column_nchars,
-            },
-        })
-    }
-}
-
-thread_local! {
-    static MODULES: RefCell<HashMap<SmolStr, ModuleInfo>>
-        = RefCell::new(HashMap::new());
-    static MODULE_COUNTER: Cell<usize> = const { Cell::new(0) };
+    pub(crate) source: SourceBuf,
+    pub(crate) ir_tree: IRTree,
+    pub(crate) module: Box<Module>,
+    names: IRNameMap,
+    // 局部名称映射表, 注意不负责全局对象的名称. 这么做是因为全局名称的前缀 `@` 和局部名称的前缀 `%` 不同,
+    // 两个命名空间不一样, 允许同名的全局对象和局部对象.
+    rev_local_names: HashMap<FuncID, RevLocalNameMap>,
+    id: usize,
 }
 
 impl ModuleInfo {
-    pub fn new(module: Module) -> Self {
-        Self {
-            module: Box::new(module),
-            names: IRNameMap::new(),
-            overview: RefCell::new(None),
-        }
+    pub(crate) fn compile_from_ir(source: &str) -> Result<Self, JsError> {
+        use remusys_ir_parser::{ModuleWithInfo, source_to_full_ir};
+        let ModuleWithInfo { module, namemap } = source_to_full_ir(source)?;
+        Self::from_module(module, namemap)
     }
+    pub(crate) fn compile_from_sysy(source: &str) -> Result<Self, JsError> {
+        use remusys_lang::{ModuleInfo as LangModuleInfo, translate_sysy_text_into_full_ir};
+        let info = match translate_sysy_text_into_full_ir(source) {
+            Ok(info) => info,
+            Err(e) => return fmt_jserr!(Err "Failed to compile SysY source: {e:#?}"),
+        };
+        let LangModuleInfo { module, names } = info;
+        Self::from_module(module, names)
+    }
+    fn from_module(module: impl Into<Box<Module>>, names: IRNameMap) -> Result<Self, JsError> {
+        static ID: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn compile_from_sysy(source: &str) -> Result<Self, JsError> {
-        let module = remusys_lang::translate_sysy_text_into_full_ir(source)
-            .map_err(|e| JsError::new(&format!("Failed to compile SysY source: {e}")))?;
-        let remusys_lang::ModuleInfo { module, names } = module;
+        let module = module.into();
+        let mut ir_tree = IRTree::new();
+        let mut builder = IRTreeBuilder::new(module.as_ref(), &names, &ir_tree);
+        let root = builder.build(IRTreeObjID::Module)?;
+        let source = SourceBuf::from(builder.source_buf);
+        ir_tree.root = root;
         Ok(Self {
+            source,
+            ir_tree,
             module,
             names,
-            overview: RefCell::new(None),
-        })
-    }
-    pub fn compile_from_ir(source: &str) -> Result<Self, JsError> {
-        let ModuleWithInfo { module, namemap } = remusys_ir_parser::source_to_full_ir(source)
-            .map_err(|e| JsError::new(&format!("Failed to compile IR source: {e}")))?;
-        Ok(Self {
-            module: Box::new(module),
-            names: namemap,
-            overview: RefCell::new(None),
+            rev_local_names: HashMap::new(),
+            id: ID.fetch_add(1, Ordering::Relaxed),
         })
     }
 
-    pub fn with_module<R>(
-        name: &str,
-        f: impl FnOnce(&ModuleInfo) -> Result<R, JsError>,
-    ) -> Result<R, JsError> {
-        let res = MODULES.with_borrow(|modules| modules.get(name).map(f));
-        match res {
-            Some(Ok(r)) => Ok(r),
-            Some(Err(e)) => Err(e),
-            None => fmt_jserr!("Module with id '{name}' not found"),
-        }
-    }
-    pub fn with_module_mut<R>(
-        id: &str,
-        f: impl FnOnce(&mut ModuleInfo) -> Result<R, JsError>,
-    ) -> Result<R, JsError> {
-        let res = MODULES.with_borrow_mut(|modules| modules.get_mut(id).map(f));
-        match res {
-            Some(Ok(r)) => Ok(r),
-            Some(Err(e)) => Err(e),
-            None => Err(JsError::new(&format!("Module with id '{id}' not found"))),
-        }
-    }
-    pub fn insert_module(mut info: ModuleInfo) -> Result<ModuleBrief, JsError> {
-        let id = format!("module_{}", Self::next_id());
-        let id_smol = SmolStr::from(id.as_str());
-        info.module.name = id;
-        MODULES.with_borrow_mut(|modules| {
-            modules.insert(id_smol.clone(), info);
-        });
-        Ok(ModuleBrief { id: id_smol })
+    // Consume the test module directly. Tests must not clone Module and then reuse old IDs,
+    // because cloned EntityAlloc storage can reshuffle positions/generations.
+    #[cfg(test)]
+    pub(crate) fn from_test_module(module: Module) -> Result<Self, JsError> {
+        Self::from_module(module, IRNameMap::default())
     }
 
-    pub(crate) fn next_id() -> usize {
-        MODULE_COUNTER.with(|counter| {
-            let id = counter.get();
-            counter.set(id + 1);
-            id
-        })
+    pub fn serialize<T: Serialize, V: From<JsValue>>(value: &T) -> Result<V, JsError> {
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        value
+            .serialize(&serializer)
+            .map_err(|e| fmt_jserr!("Serialization error: {e:#?}"))
+            .map(|v| v.into())
+    }
+    pub fn deserialize<T: DeserializeOwned>(value: impl Into<JsValue>) -> Result<T, JsError> {
+        serde_wasm_bindgen::from_value(value.into())
+            .map_err(|e| fmt_jserr!("Deserialization error: {e:#?}"))
     }
 
-    pub fn invalidate_overview(&self) {
-        self.overview.take();
+    pub fn module(&self) -> &Module {
+        &self.module
     }
-    pub fn overview_or_make(&self) -> Result<Rc<OverviewInfo>, JsError> {
-        let mut overview = self.overview.borrow_mut();
-        match &*overview {
-            Some(ov) => Ok(ov.clone()),
-            None => {
-                let new_ov = self.make_overview()?;
-                *overview = Some(new_ov.clone());
-                Ok(new_ov)
+    pub fn ir_tree(&self) -> &IRTree {
+        &self.ir_tree
+    }
+    pub fn source(&self) -> &SourceBuf {
+        &self.source
+    }
+    pub fn names(&self) -> &IRNameMap {
+        &self.names
+    }
+
+    pub fn rev_local_names(&mut self, func: FuncID) -> Result<&mut RevLocalNameMap, JsError> {
+        let Self {
+            module,
+            names,
+            rev_local_names,
+            ..
+        } = self;
+        use std::collections::hash_map::Entry;
+        match rev_local_names.entry(func) {
+            Entry::Occupied(map) => Ok(map.into_mut()),
+            Entry::Vacant(entry) => {
+                let map = Self::make_rev_local_names(module, names, func)?;
+                Ok(entry.insert(map))
             }
         }
     }
-    pub fn make_overview(&self) -> Result<Rc<OverviewInfo>, JsError> {
-        let symtab = self.module.symbols.borrow();
-        let mut func_pos = Vec::with_capacity(symtab.exported().len());
-        let mut ser = IRSerializer::new_buffered(&self.module, &self.names);
-        ser.enable_srcmap();
+    pub(super) fn make_rev_local_names(
+        module: &Module,
+        names: &IRNameMap,
+        func: FuncID,
+    ) -> Result<RevLocalNameMap, JsError> {
+        let mut rev_map = HashMap::new();
+        let allocs = &module.allocs;
+        if func.is_extern(allocs) {
+            let name = func.get_name(allocs);
+            return fmt_jserr!(Err "cannot make reverse local name map for extern function: @{name:?}");
+        }
 
-        for &id in symtab.exported().values() {
-            let obj = id.deref_ir(&self.module.allocs);
-            match obj {
-                GlobalObj::Var(_) => {
-                    ser.fmt_global(id)?;
-                }
-                GlobalObj::Func(_) => {
-                    let range = ser.fmt_func_header(FuncID::raw_from(id))?;
-                    func_pos.push((id, range));
+        for i in 0..func.args(allocs).len() as u32 {
+            let arg_id = FuncArgID(func, i);
+            if let Some(arg_name) = names.get_local_name(arg_id) {
+                rev_map.insert(arg_name.clone(), IRTreeObjID::FuncArg(func.raw_into(), i));
+            }
+        }
+
+        for (bb_id, bb) in func.blocks_iter(allocs) {
+            if let Some(bb_name) = names.get_local_name(bb_id) {
+                rev_map.insert(bb_name.clone(), IRTreeObjID::Block(bb_id));
+            }
+            for (inst_id, _) in bb.insts_iter(allocs) {
+                if let Some(inst_name) = names.get_local_name(inst_id) {
+                    rev_map.insert(inst_name.clone(), IRTreeObjID::Inst(inst_id));
                 }
             }
-            ser.wrap_and_indent()?;
         }
-
-        let mut srcmap = ser
-            .dump_srcmap()
-            .expect("internal error: source map not available");
-        let overview_src = ser.extract_string();
-        for (id, range) in func_pos {
-            srcmap.insert_range(id, range);
-        }
-        let mut lines = vec![0];
-        let mut offset: usize = 0;
-        for l in overview_src.split_inclusive('\n') {
-            offset += l.len();
-            lines.push(offset);
-        }
-        Ok(Rc::new(OverviewInfo {
-            src: SmolStr::new(overview_src.as_str()),
-            global_map: srcmap.globals,
-            lines: lines.into_boxed_slice(),
-        }))
+        Ok(rev_map)
     }
 
-    pub fn get_globals(&mut self) -> Result<ModuleGlobalsBrief, JsError> {
-        let symtab = self.module.symbols.borrow();
-        let mut globals = Vec::with_capacity(symtab.exported().len());
-        for (name, &id) in symtab.exported() {
-            let base = self.make_global_base(id, name.clone())?;
-            globals.push(base);
-        }
-        Ok(ModuleGlobalsBrief {
-            overview_src: self.overview_or_make()?.src.clone(),
-            globals: globals.into_boxed_slice(),
-        })
-    }
-    pub(crate) fn make_global_base(
-        &self,
-        id: GlobalID,
-        name: SmolStr,
-    ) -> Result<GlobalObjBase, JsError> {
-        let overview = self.overview_or_make()?;
-        let Some(range) = overview.global_map.get(&id) else {
-            return fmt_jserr!("Source location for global with id {id:?} not found in overview");
+    fn global_strid_as_func(&self, global_id: &str) -> Result<FuncID, JsError> {
+        let global_id = match GlobalID::from_str(global_id) {
+            Ok(id) => id,
+            Err(e) => return fmt_jserr!(Err "invalid global id: {global_id:?}, error: {e:#?}"),
         };
-        let overview_loc = overview.map_range_to_loc(*range);
-        let obj = id.deref_ir(&self.module.allocs);
-        Ok(GlobalObjBase {
-            id,
-            name,
-            linkage: obj.get_linkage(&self.module.allocs),
-            ty: obj.get_ptr_pointee_type(),
-            overview_loc,
-        })
-    }
-
-    pub fn make_global_obj(&self, id: GlobalID) -> Result<IRPoolObjDt, JsError> {
-        let allocs = &self.module.allocs;
-        if !id.is_alive(allocs) {
-            return fmt_jserr!("Global with id {id:?} does not exist or has been deleted");
-        }
-        let obj = id.deref_ir(&self.module.allocs);
-        let base = self.make_global_base(id, obj.clone_name())?;
-        match obj {
-            GlobalObj::Func(func) => self.make_func_obj(func, base).map(IRPoolObjDt::Func),
-            GlobalObj::Var(var) => self.make_var_obj(var, base).map(IRPoolObjDt::GlobalVar),
+        match FuncID::try_from_global(&self.module, global_id) {
+            Some(func_id) => Ok(func_id),
+            None => fmt_jserr!(Err "global id does not refer to a function: {global_id:?}"),
         }
     }
-
-    pub fn update_func_src(&self, func_id: GlobalID) -> Result<SourceUpdates, JsError> {
-        if !func_id.is_alive(&self.module.allocs) {
-            return fmt_jserr!("Function with id {func_id:?} does not exist or has been deleted");
+    pub fn path_vec_of_tree_object(&self, obj: IRTreeObjID) -> Result<Vec<IRTreeObjID>, JsError> {
+        fn path_of_block(module: &Module, block_id: BlockID) -> Result<Vec<IRTreeObjID>, JsError> {
+            let Some(block) = block_id.try_deref_ir(module) else {
+                return fmt_jserr!(Err "invalid block id: {block_id:?}");
+            };
+            let Some(func_id) = block.get_parent_func() else {
+                return fmt_jserr!(Err "block does not belong to any function: {block_id:?}");
+            };
+            Ok(vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(func_id.raw_into()),
+                IRTreeObjID::Block(block_id),
+            ])
         }
-        let Some(func_id) = FuncID::try_from_global(&self.module.allocs, func_id) else {
-            return fmt_jserr!("global id {func_id:?} is not a function");
-        };
-        let mut func_ser = FuncSerializer::new_buffered(&self.module, func_id, &self.names);
-        func_ser.enable_srcmap().fmt_func(func_id)?;
-        let srcmap = func_ser
-            .dump_srcmap()
-            .expect("internal error: source map not available");
-        let source = func_ser.extract_string();
-        let strlines = StrLines::from(source.as_str());
-
-        Ok(SourceUpdates {
-            scope: SourceUpdateScope::Func,
-            source: SmolStr::new(source.as_str()),
-            ranges: {
-                let nlocs = srcmap.funcargs[&func_id].len()
-                    + srcmap.blocks.len()
-                    + srcmap.insts.len()
-                    + srcmap.uses.len()
-                    + srcmap.jts.len();
-                let mut loc_updates = Vec::with_capacity(nlocs);
-                for (i, range) in srcmap.funcargs[&func_id].iter().enumerate() {
-                    let Some(range) = *range else {
-                        continue;
-                    };
-                    let loc = strlines.map_range(range);
-                    loc_updates.push(SourceLocUpdate {
-                        id: SourceTrackable::FuncArg(func_id.raw_into(), i as u32),
-                        new_loc: loc,
-                    });
-                }
-
-                for (&bb_id, &range) in &srcmap.blocks {
-                    let loc = strlines.map_range(range);
-                    loc_updates.push(SourceLocUpdate {
-                        id: SourceTrackable::Block(bb_id),
-                        new_loc: loc,
-                    });
-                }
-                for (&inst_id, &range) in &srcmap.insts {
-                    let loc = strlines.map_range(range);
-                    loc_updates.push(SourceLocUpdate {
-                        id: SourceTrackable::Inst(inst_id),
-                        new_loc: loc,
-                    });
-                }
-                for (&use_id, &range) in &srcmap.uses {
-                    let loc = strlines.map_range(range);
-                    loc_updates.push(SourceLocUpdate {
-                        id: SourceTrackable::Use(use_id),
-                        new_loc: loc,
-                    });
-                }
-                for (&jt_id, &range) in &srcmap.jts {
-                    let loc = strlines.map_range(range);
-                    loc_updates.push(SourceLocUpdate {
-                        id: SourceTrackable::JumpTarget(jt_id),
-                        new_loc: loc,
-                    });
-                }
-
-                loc_updates.into_boxed_slice()
-            },
-            elliminated: Box::new([]),
-        })
-    }
-
-    pub(crate) fn make_var_obj(
-        &self,
-        var: &GlobalVar,
-        base: GlobalObjBase,
-    ) -> Result<GlobalVarObjDt, JsError> {
-        Ok(GlobalVarObjDt {
-            base,
-            init: var.get_init(&self.module.allocs).into(),
-        })
-    }
-    pub(crate) fn make_func_obj(
-        &self,
-        func: &FuncObj,
-        base: GlobalObjBase,
-    ) -> Result<FuncObjDt, JsError> {
-        let func_id = FuncID::raw_from(base.id);
-        let Some(body) = &func.body else {
-            return Ok(FuncObjDt {
-                base,
-                args: Box::new([]),
-                ret_ty: func.ret_type,
-                source: SmolStr::new(""),
-                blocks: None,
-            });
-        };
-
-        let mut args = Vec::with_capacity(func.args.len());
-        let mut func_ser = FuncSerializer::try_new_buffered(&self.module, func_id, &self.names)?;
-        func_ser.enable_srcmap().fmt_func(func_id)?;
-
-        let Some(srcmap) = func_ser.dump_srcmap() else {
-            let name = func.clone_name();
-            return fmt_jserr!("internal error: source map of function @{name} not available");
-        };
-        let name_map = func_ser.get_numbers();
-        let func_src = func_ser.extract_string();
-        let src_lines = StrLines::from(func_src.as_str());
-        let allocs = &self.module.allocs;
-
-        for arg in &func.args {
-            let arg_id = FuncArgID(func_id, arg.index);
-            let source_loc = srcmap
-                .funcarg_get_range(arg_id)
-                .map(|r| src_lines.map_range(r));
-            args.push(FuncArgDt {
-                name: name_map.get_local_name(arg_id).unwrap_or_else(|| {
-                    format_smolstr!("%unnamed_arg({} of @{})", arg.index, func.clone_name())
-                }),
-                ty: arg.ty,
-                source_loc,
-            });
+        fn path_of_inst(module: &Module, inst_id: InstID) -> Result<Vec<IRTreeObjID>, JsError> {
+            let Some(inst) = inst_id.try_deref_ir(module) else {
+                return fmt_jserr!(Err "invalid instruction id: {inst_id:?}");
+            };
+            let Some(block) = inst.get_parent() else {
+                return fmt_jserr!(Err "instruction does not belong to any block: {inst_id:?}");
+            };
+            let mut res = path_of_block(module, block)?;
+            res.push(IRTreeObjID::Inst(inst_id));
+            Ok(res)
         }
-        let mut blocks = Vec::with_capacity(body.blocks.len());
-        for (bb_id, bb) in body.blocks.iter(&allocs.blocks) {
-            blocks.push(self.make_block_obj(bb_id, bb, &srcmap, &name_map, &src_lines)?);
-        }
-        Ok(FuncObjDt {
-            base,
-            args: args.into_boxed_slice(),
-            ret_ty: func.ret_type,
-            source: SmolStr::new(func_src.as_str()),
-            blocks: Some(blocks.into_boxed_slice()),
-        })
-    }
-
-    pub(crate) fn make_block_obj(
-        &self,
-        bb_id: BlockID,
-        bb: &BlockObj,
-        srcmap: &SourceRangeMap,
-        nummap: &FuncNumberMap,
-        src_lines: &StrLines<'_>,
-    ) -> Result<BlockDt, JsError> {
-        let mut inst_dts = Vec::with_capacity(bb.get_insts().len());
-        let allocs = &self.module.allocs;
-        for (inst_id, inst) in bb.insts_iter(allocs) {
-            if matches!(inst, InstObj::PhiInstEnd(_)) {
-                continue;
+        let path = match obj {
+            IRTreeObjID::Module => vec![IRTreeObjID::Module],
+            IRTreeObjID::Global(global_id) => {
+                vec![IRTreeObjID::Module, IRTreeObjID::Global(global_id)]
             }
-            inst_dts.push(self.make_inst_obj(inst_id, inst, srcmap, nummap, src_lines)?);
-        }
-        Ok(BlockDt {
-            id: bb_id,
-            // safe unwrap: a block must always have a parent function
-            parent: bb.get_parent_func().unwrap().raw_into(),
-            name: nummap.get_local_name(bb_id),
-            source_loc: srcmap
-                .index_get_range(bb_id)
-                .map(|r| src_lines.map_range(*r))
-                .unwrap(),
-            insts: inst_dts.into_boxed_slice(),
-        })
-    }
-
-    pub(crate) fn make_inst_obj(
-        &self,
-        inst_id: InstID,
-        inst: &InstObj,
-        srcmap: &SourceRangeMap,
-        nummap: &FuncNumberMap,
-        src_lines: &StrLines<'_>,
-    ) -> Result<InstDt, JsError> {
-        let inst_base = InstBase {
-            id: inst_id,
-            // safe unwrap: an instruction must always have a parent block
-            parent: inst.get_parent().unwrap(),
-            name: nummap.get_local_name(inst_id),
-            opcode: inst.get_opcode(),
-            operands: {
-                let mut ops = Vec::with_capacity(inst.get_operands().len());
-                for uid in inst.operands_iter() {
-                    let dt = self.make_use_dt(uid, srcmap, src_lines)?;
-                    ops.push(dt);
-                }
-                ops.into_boxed_slice()
-            },
-            source_loc: srcmap
-                .index_get_range(inst_id)
-                .map(|r| src_lines.map_range(*r))
-                .unwrap(),
-        };
-
-        let allocs = &self.module.allocs;
-        match inst {
-            InstObj::Phi(phi) => {
-                let phi_dt = PhiInstDt {
-                    base: inst_base,
-                    incomings: {
-                        let mut incomings = Vec::with_capacity(phi.incoming_uses().len());
-                        for [uval, ubb] in phi.incoming_uses().iter() {
-                            let from = BlockID::from_ir(ubb.get_operand(allocs));
-                            let value = ValueDt::from(uval.get_operand(allocs));
-                            incomings.push(PhiIncoming { value, from });
-                        }
-                        incomings.into_boxed_slice()
-                    },
+            IRTreeObjID::FuncArg(global_id, idx) => vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(global_id),
+                IRTreeObjID::FuncHeader(global_id),
+                IRTreeObjID::FuncArg(global_id, idx),
+            ],
+            IRTreeObjID::Block(block_id) => path_of_block(&self.module, block_id)?,
+            IRTreeObjID::Inst(inst_id) => path_of_inst(&self.module, inst_id)?,
+            IRTreeObjID::BlockIdent(block_id) => {
+                let mut res = path_of_block(&self.module, block_id)?;
+                res.push(IRTreeObjID::BlockIdent(block_id));
+                res
+            }
+            IRTreeObjID::FuncHeader(global_id) => vec![
+                IRTreeObjID::Module,
+                IRTreeObjID::Global(global_id),
+                IRTreeObjID::FuncHeader(global_id),
+            ],
+            IRTreeObjID::JumpTarget(jt_id) => {
+                let Some(jt) = jt_id.try_deref_ir(&self.module) else {
+                    return fmt_jserr!(Err "invalid jump target id: {jt_id:?}");
                 };
-                Ok(InstDt::Phi(phi_dt))
-            }
-            x if x.is_terminator() => {
-                let termi = TerminatorDt {
-                    base: inst_base,
-                    succs: {
-                        let jts = x.try_get_jts().unwrap_or(JumpTargets::Fix(&[]));
-                        let mut succs = Vec::with_capacity(jts.len());
-                        for jt in jts.iter() {
-                            let jt_dt = self.make_jt_dt(*jt, srcmap, src_lines)?;
-                            succs.push(jt_dt);
-                        }
-                        succs.into_boxed_slice()
-                    },
+                let Some(inst) = jt.terminator.get() else {
+                    return fmt_jserr!(Err "jump target does not belong to any instruction: {jt_id:?}");
                 };
-                Ok(InstDt::Terminator(termi))
+                let mut res = path_of_inst(&self.module, inst)?;
+                res.push(IRTreeObjID::JumpTarget(jt_id));
+                res
             }
-            _ => Ok(InstDt::Normal(inst_base)),
-        }
+            IRTreeObjID::Use(use_id) => {
+                let Some(use_obj) = use_id.try_deref_ir(&self.module) else {
+                    return fmt_jserr!(Err "invalid use id: {use_id:?}");
+                };
+                let Some(UserID::Inst(inst)) = use_obj.user.get() else {
+                    return Ok(vec![]);
+                };
+                let mut res = path_of_inst(&self.module, inst)?;
+                res.push(IRTreeObjID::Use(use_id));
+                res
+            }
+        };
+        Ok(path)
     }
 
-    pub(crate) fn make_use_dt(
-        &self,
-        use_id: UseID,
-        srcmap: &SourceRangeMap,
-        src_lines: &StrLines<'_>,
-    ) -> Result<UseDt, JsError> {
-        let use_obj = use_id.deref_ir(&self.module.allocs);
-        Ok(UseDt {
-            id: use_id,
-            user: use_obj
-                .user
-                .get()
-                .ok_or_else(|| {
-                    JsError::new(&format!("Use with id {use_id:?} has invalid user operand"))
-                })?
-                .into(),
-            kind: use_obj.get_kind(),
-            value: use_obj.operand.get().into(),
-            source_loc: srcmap
-                .index_get_range(use_id)
-                .map(|r| src_lines.map_range(*r)),
-        })
-    }
-    pub(crate) fn make_jt_dt(
-        &self,
-        jt_id: JumpTargetID,
-        srcmap: &SourceRangeMap,
-        src_lines: &StrLines<'_>,
-    ) -> Result<JumpTargetDt, JsError> {
-        let jt_obj = jt_id.deref_ir(&self.module.allocs);
-        let target = jt_obj.block.get().ok_or_else(|| {
-            JsError::new(&format!(
-                "Jump target with id {jt_id:?} has invalid block operand"
-            ))
-        })?;
-        Ok(JumpTargetDt {
-            id: jt_id,
-            terminator: jt_obj.terminator.get().ok_or_else(|| {
-                JsError::new(&format!(
-                    "Jump target with id {jt_id:?} has invalid terminator operand"
-                ))
-            })?,
-            kind: jt_obj.get_kind(),
-            target,
-            source_loc: srcmap
-                .index_get_range(jt_id)
-                .map(|r| src_lines.map_range(*r))
-                .ok_or_else(|| {
-                    JsError::new(&format!(
-                        "Source location for jump target with id {jt_id:?} not found in source map"
-                    ))
-                })?,
-        })
-    }
-
-    pub fn try_get_func_scope(&self, id: SourceTrackable) -> Result<Option<GlobalID>, JsError> {
-        let allocs = &self.module.allocs;
-        match id {
-            SourceTrackable::Global(global_id) if global_id.is_alive(allocs) => {
-                if matches!(global_id.deref_ir(allocs), GlobalObj::Func(_)) {
-                    Ok(Some(global_id))
-                } else {
-                    Ok(None)
-                }
-            }
-            SourceTrackable::Block(block_id) if block_id.is_alive(allocs) => {
-                Ok(block_id.get_parent_func(allocs).map(FuncID::raw_into))
-            }
-            SourceTrackable::Inst(inst_id) if inst_id.is_alive(allocs) => {
-                Ok(self.func_scope_of_inst(inst_id))
-            }
-            SourceTrackable::Expr(expr_id) if expr_id.is_alive(allocs) => Ok(None),
-            SourceTrackable::Use(use_id) if use_id.is_alive(allocs) => {
-                let use_obj = use_id.deref_ir(allocs);
-                if let Some(UserID::Inst(inst)) = use_obj.user.get() {
-                    Ok(self.func_scope_of_inst(inst))
-                } else {
-                    Ok(None)
-                }
-            }
-            SourceTrackable::JumpTarget(jt_id) if jt_id.is_alive(allocs) => {
-                let parent = jt_id
-                    .get_terminator(allocs)
-                    .and_then(|termi| self.func_scope_of_inst(termi));
-                Ok(parent)
-            }
-            SourceTrackable::FuncArg(func_id, _) if func_id.is_alive(allocs) => {
-                match func_id.deref_ir(allocs) {
-                    GlobalObj::Func(_) => Ok(Some(func_id)),
-                    _ => {
-                        fmt_jserr!("global part of function arg id is falsely non-function id")
-                    }
-                }
-            }
-            _ => fmt_jserr!("ID {id:?} is invalid in module {:?}", self.module.name),
+    pub fn do_get_path_scope(&self, path: &[IRTreeObjID]) -> Result<Option<GlobalID>, JsError> {
+        if path.len() <= 1 {
+            return Ok(None);
+        }
+        let IRTreeObjID::Global(global_id) = path[1] else {
+            return Ok(None);
+        };
+        let Some(global_obj) = global_id.try_deref_ir(&self.module) else {
+            return fmt_jserr!(Err "invalid global id in object path: {global_id:?}");
+        };
+        match global_obj {
+            GlobalObj::Func(func) if func.body.is_some() => Ok(Some(global_id)),
+            _ => Ok(None),
         }
     }
+}
 
-    pub(crate) fn func_scope_of_inst(&self, inst_id: InstID) -> Option<GlobalID> {
-        let allocs = &self.module.allocs;
-        inst_id
-            .get_parent(allocs)
-            .and_then(|bb| bb.get_parent_func(allocs))
-            .map(FuncID::raw_into)
+#[wasm_bindgen]
+impl ModuleInfo {
+    /// 从给定的源代码编译出一个 ModuleInfo. `ty` 参数指定了源代码的类型, 目前支持 "ir" 和 "sysy".
+    ///
+    /// @param {"ir" | "sysy"} ty - 源代码的类型, 可以是 "ir" 或 "sysy".
+    pub fn compile_from(ty: &str, source: &str, filename: &str) -> Result<Self, JsError> {
+        let mut res = match ty {
+            "ir" => Self::compile_from_ir(source),
+            "sysy" => Self::compile_from_sysy(source),
+            ty => fmt_jserr!(Err "unsupported source type: {ty}"),
+        }?;
+        let module_name = Path::new(filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("input");
+        res.module.name = module_name.to_string();
+        Ok(res)
     }
 
-    pub fn make_dominator_tree(&self, func_id: GlobalID) -> Result<DomTreeDt, JsError> {
-        let allocs = &self.module.allocs;
-        if !func_id.is_alive(allocs) {
-            return fmt_jserr!("Function with id {func_id:?} does not exist or has been deleted");
-        }
-        if !matches!(func_id.deref_ir(allocs), GlobalObj::Func(_)) {
-            return fmt_jserr!("global id {func_id:?} is not a function");
-        }
-        DomTreeDt::new(&self.module, FuncID::raw_from(func_id))
+    /// 导出当前 ModuleInfo 中的源代码文本. 这个文本可以用来在 Monaco 编辑器中显示和编辑.
+    pub fn dump_source(&self) -> String {
+        self.source.to_string()
     }
 
-    pub fn make_block_dfg(&self, block_id: BlockID) -> Result<BlockDfgDt, JsError> {
-        if !block_id.is_alive(&self.module.allocs) {
-            return fmt_jserr!("block id {block_id:?} is freed or disposed");
-        }
-        BlockDfgDt::new(&self.module, block_id)
+    /// 获取当前 Module 的临时唯一 ID.
+    pub fn get_id(&self) -> usize {
+        self.id
     }
-    pub fn make_call_graph(&self) -> Result<CallGraphDt, JsError> {
-        Ok(CallGraphDt::new(&self.module))
+
+    /// 给定一个 Monaco 编辑器中的位置, 返回对应的 IR 对象路径. 这个路径可以用来在 JS 侧定位和高亮显示对应的 IR 对象.
+    ///
+    /// @param {MonacoSrcPos} pos - Monaco 编辑器中的位置, 包含 line 和 column 两个字段, 都是 1-based 的.
+    pub fn path_of_srcpos(&self, pos: JsMonacoSrcPos) -> Result<JsIRObjPath, JsError> {
+        let monaco_pos: MonacoSrcPos = Self::deserialize(pos)?;
+        let byte_pos = self.source.monaco_pos_to_byte(monaco_pos)?;
+        let obj_path = self.ir_tree.locate_obj_path(byte_pos)?;
+        Self::serialize(&obj_path.as_slice())
+    }
+
+    /// IR Tree 加载器: 给定一个 IR 对象路径, 返回对应树结点的信息（包括它代表的 IR 对象、它的类型、它在源代码中的范围等）.
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径, 从模块全局对象开始, 每个对象都是前一个对象的直接子对象.
+    /// @return {IRTreeNodeDt} 树结点信息.
+    pub fn path_get_node(&self, path: JsIRObjPath) -> Result<JsIRTreeNodeDt, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        let node_path = self.ir_tree.resolve_path(&obj_path)?;
+        let Some(node_id) = node_path.last() else {
+            return fmt_jserr!(Err "object path cannot be empty");
+        };
+        let node_obj = node_id.obj(&self.ir_tree);
+        let byte_range = self.ir_tree.get_path_source_range(&node_path)?;
+        let monaco_range = self.source.byte_range_to_monaco(byte_range)?;
+        let node = IRTreeNodeDt {
+            obj: node_obj,
+            kind: node_obj.get_class(self)?,
+            label: node_obj.get_name(self)?,
+            src_range: monaco_range,
+        };
+        Self::serialize(&node)
+    }
+
+    /// IR Tree 加载器: 通过结点的 path 加载对应树结点的子结点.
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径, 从模块全局对象开始, 每个对象都是前一个对象的直接子对象.
+    /// @return {IRTreeNodeDt[]} 子结点信息数组.
+    pub fn ir_tree_get_children(&self, path: JsIRObjPath) -> Result<JsIRTreeNodes, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        let mut node_path = self.ir_tree.resolve_path(&obj_path)?;
+        let Some(last) = node_path.pop() else {
+            return fmt_jserr!(Err "object path cannot be empty");
+        };
+        let children_id = last.children(&self.ir_tree);
+        let Range { start, .. } = self.ir_tree.get_path_source_range(&node_path)?;
+        let mut res = Vec::with_capacity(children_id.len());
+        for child_id in children_id {
+            let child_delta = child_id.pos_delta(&self.ir_tree);
+            let child_pos_begin = start.advance(child_delta.start);
+            let child_pos_end = start.advance(child_delta.end);
+            let child_range = self
+                .source
+                .byte_range_to_monaco(child_pos_begin..child_pos_end)?;
+            let obj_id = child_id.obj(&self.ir_tree);
+            res.push(IRTreeNodeDt {
+                kind: obj_id.get_class(self)?,
+                obj: obj_id,
+                src_range: child_range,
+                label: obj_id.get_name(self)?,
+            });
+        }
+        Self::serialize(&res)
+    }
+
+    /// 重命名一个 IR 对象（函数、基本块、指令等）. JS 侧需要废弃所有缓存, 重新构建 IRDag 和相关数据结构.
+    ///
+    /// @param {IRTreeObjID[]} path - 对象路径.
+    /// @param {string} new_name - 新名称, 不需要带前缀 `%` 或 `@`.
+    pub fn rename(&mut self, path: JsIRObjPath, new_name: &str) -> Result<JsRenameRes, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        let Some(last) = obj_path.last().cloned() else {
+            return fmt_jserr!(Err "object path cannot be empty");
+        };
+        IRRename::new(self, last)
+            .rename(new_name)
+            .and_then(|x| Self::serialize(&x))
+    }
+
+    /// 通过一个 IR 对象 ID 获取它在 IR Tree 中的路径.
+    ///
+    /// 对于可能出现一对多映射的情况, 会返回一个错误.
+    ///
+    /// @param {IRTreeObjID} object_id - IR 对象 ID, 可以是模块、函数、基本块、指令等对象的 ID.
+    pub fn path_of_tree_object(&self, object_id: JsTreeObjID) -> Result<JsIRObjPath, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let path = self.path_vec_of_tree_object(object)?;
+        if path.is_empty() {
+            return fmt_jserr!(Err "object is not part of the IR tree: {object:?}");
+        }
+        Self::serialize(&path)
+    }
+
+    /// 通过一个 IR 对象 ID 获取它的作用域.
+    ///
+    /// @param {IRTreeObjID} object_id - IR 对象 ID, 可以是模块、函数、基本块、指令等对象的 ID.
+    pub fn get_object_scope(&self, object_id: JsTreeObjID) -> Result<String, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let path = self.path_vec_of_tree_object(object)?;
+        if path.len() < 2 {
+            return fmt_jserr!(Err "object does not have a scope: {object:?}");
+        }
+        let IRTreeObjID::Global(scope) = path[1] else {
+            return fmt_jserr!(Err "object does not have a global scope: {object:?}");
+        };
+        Ok(scope.to_strid().to_string())
+    }
+
+    /// 通过一个 IR 对象路径获取它的作用域. 这个函数和 `get_object_scope` 的区别是, 这个函数接受一个 IR 对象路径.
+    pub fn get_path_scope(&self, path: JsIRObjPath) -> Result<JsScopeID, JsError> {
+        let obj_path: IRObjPathBuf = Self::deserialize(path)?;
+        self.do_get_path_scope(obj_path.as_slice())
+            .and_then(|x| Self::serialize(&x))
+    }
+}
+
+/// Module -- the graph maker
+#[wasm_bindgen]
+impl ModuleInfo {
+    /// 获取指定函数的控制流图.
+    ///
+    /// @param {GlobalID} func_id - 函数的全局 ID, 内存池索引的序列化版本, 和函数的名称表示一点关系也没有.
+    /// @return {FuncCfgDt} 函数的控制流图数据.
+    pub fn get_func_cfg(&self, func_id: &str) -> Result<JsFuncCfgDt, JsError> {
+        let func_id = self.global_strid_as_func(func_id)?;
+        FuncCfgDt::new(&self.module, &self.names, func_id)
+            .and_then(|cfg_dt| Self::serialize(&cfg_dt))
+    }
+
+    /// 获取指定函数的支配树. 注意目前只支持支配树, 不支持后支配树.
+    ///
+    /// @param {GlobalID} func_id - 函数的全局 ID, 内存池索引的序列化版本, 和函数的名称表示一点关系也没有.
+    /// @return {DomTreeDt} 函数的支配树数据.
+    pub fn get_func_dom_tree(&self, func_id: &str) -> Result<JsDomTreeDt, JsError> {
+        let func_id = self.global_strid_as_func(func_id)?;
+        DomTreeDt::new(self, func_id).and_then(|dt| Self::serialize(&dt))
+    }
+
+    /// 获取指定基本块的数据流图. 目前只支持单个基本块内的局部数据流, 不包含跨基本块的参数传递等数据流.
+    ///
+    /// @param {BlockID} block_id - 基本块的 ID, 内存池索引的序列化版本, 和基本块的名称表示一点关系也没有.
+    /// @return {BlockDfgDt} 基本块的数据流图数据.
+    pub fn get_block_dfg(&self, block_id: &str) -> Result<JsBlockDfg, JsError> {
+        let block_id = match BlockID::from_str(block_id) {
+            Ok(id) => id,
+            Err(e) => return fmt_jserr!(Err "invalid block id: {block_id:?}, error: {e:#?}"),
+        };
+        BlockDfg::new(self, block_id).and_then(|dfg| Self::serialize(&dfg))
+    }
+
+    /// 获取以某个指令为中心的 Def-Use 图. 这个图包含了该指令的所有直接操作数和所有直接用户, 以及它们之间的连接关系.
+    /// 注意这个图可能包含多条重边, 因为一个指令可能多次使用同一个操作数, 也可能被同一个用户多次使用.
+    /// 目前这个图只包含直接的 Def-Use 关系, 不包含跨基本块的数据流关系
+    pub fn get_def_use_graph(&self, inst_id: &str) -> Result<JsDefUseGraph, JsError> {
+        let inst_id = match InstID::from_str(inst_id) {
+            Ok(id) => id,
+            Err(e) => return fmt_jserr!(Err "invalid instruction id: {inst_id:?}, error: {e:#?}"),
+        };
+        DefUseGraphDt::new(self, inst_id).and_then(|dg| Self::serialize(&dg))
+    }
+
+    /// 获取整个模块的函数调用图. 这个调用图是一个有向图, 会合并重边.
+    ///
+    /// @return {CallGraphDt} 模块的函数调用图数据.
+    pub fn get_call_graph(&self) -> Result<JsCallGraphDt, JsError> {
+        CallGraphDt::new(self).and_then(|cg| Self::serialize(&cg))
     }
 }

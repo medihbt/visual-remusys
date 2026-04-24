@@ -1,65 +1,42 @@
-#![allow(dead_code)]
+use serde::{Deserialize, Serialize};
+use smol_str::{SmolStr, ToSmolStr, format_smolstr};
+use wasm_bindgen::JsError;
+
+use crate::{IRTreeObjID, MonacoSrcRange, fmt_jserr};
+
+pub mod call_graph;
+pub mod cfg;
+pub mod defuse_graph;
+pub mod dfg;
+pub mod dom;
+pub mod testing;
 
 use remusys_ir::{
     base::APInt,
-    ir::{inst::*, *},
+    ir::*,
     typing::{AggrType, FPKind, IValType, ScalarType, ValTypeID},
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use smol_str::{SmolStr, ToSmolStr};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StrI64(pub i64);
+
 impl Serialize for StrI64 {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0.to_smolstr())
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.to_smolstr().serialize(serializer)
     }
 }
+
 impl<'de> Deserialize<'de> for StrI64 {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
         let s = SmolStr::deserialize(deserializer)?;
-        s.parse::<i64>()
-            .map(StrI64)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-pub struct SourcePos {
-    pub line: usize,
-    pub column: usize,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-pub struct SourceLoc {
-    pub begin: SourcePos,
-    pub end: SourcePos,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-pub enum RefValueDt {
-    Global(GlobalID),
-    Block(BlockID),
-    Inst(InstID),
-    Expr(ExprID),
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-pub enum UserIDDt {
-    Inst(InstID),
-    Global(GlobalID),
-    Expr(ExprID),
-}
-
-impl From<UserID> for UserIDDt {
-    fn from(u: UserID) -> Self {
-        match u {
-            UserID::Expr(id) => UserIDDt::Expr(id),
-            UserID::Inst(id) => UserIDDt::Inst(id),
-            UserID::Global(id) => UserIDDt::Global(id),
-        }
+        let value = s.parse::<i64>().map_err(serde::de::Error::custom)?;
+        Ok(StrI64(value))
     }
 }
 
@@ -79,21 +56,12 @@ pub enum ValueDt {
     F64(f64),
     ZeroInit(AggrType),
     FuncArg(GlobalID, u32),
+
     // Flatten: RefValueDt
     Global(GlobalID),
     Block(BlockID),
     Inst(InstID),
     Expr(ExprID),
-}
-impl From<RefValueDt> for ValueDt {
-    fn from(value: RefValueDt) -> Self {
-        match value {
-            RefValueDt::Global(id) => ValueDt::Global(id),
-            RefValueDt::Block(id) => ValueDt::Block(id),
-            RefValueDt::Inst(id) => ValueDt::Inst(id),
-            RefValueDt::Expr(id) => ValueDt::Expr(id),
-        }
-    }
 }
 impl From<ConstData> for ValueDt {
     fn from(value: ConstData) -> Self {
@@ -119,6 +87,15 @@ impl From<ConstData> for ValueDt {
             },
             ConstData::Float(FPKind::Ieee32, f) => Self::F32(f as f32),
             ConstData::Float(FPKind::Ieee64, f) => Self::F64(f),
+        }
+    }
+}
+impl From<UserID> for ValueDt {
+    fn from(user_id: UserID) -> Self {
+        match user_id {
+            UserID::Expr(expr_id) => Self::Expr(expr_id),
+            UserID::Inst(inst_id) => Self::Inst(inst_id),
+            UserID::Global(global_id) => Self::Global(global_id),
         }
     }
 }
@@ -172,212 +149,77 @@ impl ValueDt {
         };
         Some(val)
     }
-}
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
-pub enum SourceTrackable {
-    Global(GlobalID),
-    Block(BlockID),
-    Inst(InstID),
-    Expr(ExprID),
-    Use(UseID),
-    JumpTarget(JumpTargetID),
-    FuncArg(GlobalID, u32),
-}
-
-impl From<PoolAllocatedID> for SourceTrackable {
-    fn from(value: PoolAllocatedID) -> Self {
-        match value {
-            PoolAllocatedID::Global(id) => SourceTrackable::Global(id),
-            PoolAllocatedID::Block(id) => SourceTrackable::Block(id),
-            PoolAllocatedID::Inst(id) => SourceTrackable::Inst(id),
-            PoolAllocatedID::Expr(id) => SourceTrackable::Expr(id),
-            PoolAllocatedID::Use(id) => SourceTrackable::Use(id),
-            PoolAllocatedID::JumpTarget(id) => SourceTrackable::JumpTarget(id),
-        }
+    pub fn get_name(&self, module: &Module, names: &IRNameMap) -> Result<SmolStr, JsError> {
+        let name = match self {
+            ValueDt::None => SmolStr::new("none"),
+            ValueDt::Undef(ty) => {
+                format_smolstr!("{} undef", ty.get_display_name(&module.tctx))
+            }
+            ValueDt::PtrNull => SmolStr::new("ptr null"),
+            ValueDt::I1(true) => SmolStr::new("true"),
+            ValueDt::I1(false) => SmolStr::new("false"),
+            ValueDt::I8(v) => format_smolstr!("i8 {v}"),
+            ValueDt::I16(v) => format_smolstr!("i16 {v}"),
+            ValueDt::I32(v) => format_smolstr!("i32 {v}"),
+            ValueDt::I64(StrI64(v)) => format_smolstr!("i64 {v}"),
+            ValueDt::APInt(apint) => {
+                format_smolstr!("i{} {}", apint.bits(), apint.as_signed())
+            }
+            ValueDt::F32(v) => format_smolstr!("f32 {v}"),
+            ValueDt::F64(v) => format_smolstr!("f64 {v}"),
+            ValueDt::ZeroInit(_) => SmolStr::new("zeroinitializer"),
+            ValueDt::FuncArg(glob_id, idx) => {
+                let Some(func_id) = FuncID::try_from_global(module, *glob_id) else {
+                    return fmt_jserr!(Err "function {glob_id:?} does not exist");
+                };
+                match names.get_local_name(FuncArgID(func_id, *idx)) {
+                    Some(name) => format_smolstr!("%{name}"),
+                    None => format_smolstr!("@{}.arg{idx}", func_id.get_name(module)),
+                }
+            }
+            ValueDt::Global(global_id) => {
+                let Some(obj) = global_id.try_deref_ir(module) else {
+                    return fmt_jserr!(Err "global {global_id:?} does not exist");
+                };
+                format_smolstr!("@{}", obj.get_name())
+            }
+            ValueDt::Block(block_id) => match names.get_local_name(*block_id) {
+                Some(name) => format_smolstr!("%{name}"),
+                None => block_id.to_strid(),
+            },
+            ValueDt::Inst(inst_id) => match names.get_local_name(*inst_id) {
+                Some(name) => format_smolstr!("%{name}"),
+                None => inst_id.to_strid(),
+            },
+            ValueDt::Expr(expr_id) => match names.get_local_name(*expr_id) {
+                Some(name) => format_smolstr!("%{name}"),
+                None => expr_id.to_strid(),
+            },
+        };
+        Ok(name)
     }
 }
 
-// Section: serialize-only DTOs
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UseDt {
-    pub id: UseID,
-    pub user: UserIDDt,
-    pub kind: UseKind,
-    pub value: ValueDt,
-    pub source_loc: Option<SourceLoc>,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct JumpTargetDt {
-    pub id: JumpTargetID,
-    pub terminator: InstID,
-    pub kind: JumpTargetKind,
-    pub target: BlockID,
-    pub source_loc: SourceLoc,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct FuncArgDt {
-    pub name: SmolStr,
-    pub ty: ValTypeID,
-    pub source_loc: Option<SourceLoc>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GlobalObjBase {
-    pub id: GlobalID,
-    pub name: SmolStr,
-    pub linkage: Linkage,
-    pub ty: ValTypeID,
-    pub overview_loc: SourceLoc,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct FuncObjDt {
-    #[serde(flatten)]
-    pub base: GlobalObjBase,
-    pub args: Box<[FuncArgDt]>,
-    pub ret_ty: ValTypeID,
-    pub source: SmolStr,
-    pub blocks: Option<Box<[BlockDt]>>,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct GlobalVarObjDt {
-    #[serde(flatten)]
-    pub base: GlobalObjBase,
-    pub init: ValueDt,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct BlockDt {
-    pub id: BlockID,
-    pub parent: GlobalID,
-    pub name: Option<SmolStr>,
-    pub source_loc: SourceLoc,
-    pub insts: Box<[InstDt]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InstBase {
-    pub id: InstID,
-    pub parent: BlockID,
-    pub name: Option<SmolStr>,
-    pub opcode: Opcode,
-    pub operands: Box<[UseDt]>,
-    pub source_loc: SourceLoc,
-}
-pub type NormalInstDt = InstBase;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TerminatorDt {
-    #[serde(flatten)]
-    pub base: InstBase,
-    pub succs: Box<[JumpTargetDt]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct PhiIncoming {
-    pub value: ValueDt,
-    pub from: BlockID,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct PhiInstDt {
-    #[serde(flatten)]
-    pub base: InstBase,
-    pub incomings: Box<[PhiIncoming]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "typeid")]
-pub enum InstDt {
-    #[serde(rename = "Inst")]
-    Normal(NormalInstDt),
-    #[serde(rename = "Terminator")]
-    Terminator(TerminatorDt),
-    #[serde(rename = "Phi")]
-    Phi(PhiInstDt),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SourceLocUpdate {
-    pub id: SourceTrackable,
-    pub new_loc: SourceLoc,
-}
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum SourceUpdateScope {
-    Func,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum IRTreeNodeClass {
     Module,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct SourceUpdates {
-    pub scope: SourceUpdateScope,
-    pub source: SmolStr,
-    pub ranges: Box<[SourceLocUpdate]>,
-    pub elliminated: Box<[SourceTrackable]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModuleBrief {
-    pub id: SmolStr,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct ModuleGlobalsBrief {
-    pub overview_src: SmolStr,
-    pub globals: Box<[GlobalObjBase]>,
+    GlobalVar,
+    ExternFunc,
+    Func,
+    FuncArg,
+    Block,
+    PhiInst,
+    NormalInst,
+    TerminatorInst,
+    Use,
+    JumpTarget,
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "typeid")]
-pub enum IRPoolObjDt {
-    Func(FuncObjDt),
-    GlobalVar(GlobalVarObjDt),
-    Block(BlockDt),
-    Terminator(TerminatorDt),
-    Inst(NormalInstDt),
-    Phi(PhiInstDt),
-}
-impl From<FuncObjDt> for IRPoolObjDt {
-    fn from(value: FuncObjDt) -> Self {
-        Self::Func(value)
-    }
-}
-impl From<GlobalVarObjDt> for IRPoolObjDt {
-    fn from(value: GlobalVarObjDt) -> Self {
-        Self::GlobalVar(value)
-    }
-}
-impl From<BlockDt> for IRPoolObjDt {
-    fn from(value: BlockDt) -> Self {
-        Self::Block(value)
-    }
-}
-impl From<TerminatorDt> for IRPoolObjDt {
-    fn from(value: TerminatorDt) -> Self {
-        Self::Terminator(value)
-    }
-}
-impl From<NormalInstDt> for IRPoolObjDt {
-    fn from(value: NormalInstDt) -> Self {
-        Self::Inst(value)
-    }
-}
-impl From<PhiInstDt> for IRPoolObjDt {
-    fn from(value: PhiInstDt) -> Self {
-        Self::Phi(value)
-    }
-}
-impl From<InstDt> for IRPoolObjDt {
-    fn from(value: InstDt) -> Self {
-        match value {
-            InstDt::Normal(inst) => Self::Inst(inst),
-            InstDt::Terminator(term) => Self::Terminator(term),
-            InstDt::Phi(phi) => Self::Phi(phi),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FuncCloneInfo {
-    pub new_id: GlobalID,
-    pub bb_map: Box<[(BlockID, BlockID)]>,
-    pub inst_map: Box<[(InstID, InstID)]>,
+pub struct IRTreeNodeDt {
+    pub obj: IRTreeObjID,
+    pub kind: IRTreeNodeClass,
+    pub label: SmolStr,
+    pub src_range: MonacoSrcRange,
 }

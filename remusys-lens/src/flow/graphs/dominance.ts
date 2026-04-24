@@ -1,65 +1,56 @@
-import {
-  makeDominatorTree,
-  type BlockID,
-  type DomTreeDt,
-  type GlobalID,
-} from "../../ir/ir";
-import { ModuleCache } from "../../ir/ir-state";
-import type { FlowEdge } from "../components/Edge";
-import type { FlowElemNode, FlowNode } from "../components/Node";
-import { layoutSimpleFlow } from "./layout";
+import type { BlockID, DomTreeEdge, DomTreeNode, GlobalID, IRObjPath } from "remusys-wasm";
 
-export async function renderDominatiorTree(
-  module: ModuleCache,
-  focusBB: BlockID | null,
-  dominance: DomTreeDt,
-): Promise<[FlowNode[], FlowEdge[]]> {
-  if (module === null) {
-    throw new Error("No module loaded");
-  }
-  const { nodes, edges } = dominance;
-  const flowNodes: FlowElemNode[] = nodes.map((node, idx) => {
-    const block = module.loadBlock(node);
-    return {
-      id: node,
-      type: "elemNode",
-      width: 120,
-      height: 45,
-      position: { x: 0, y: idx * 100 },
-      data: {
-        label: block?.name || node,
-        focused: node === focusBB,
-        irObjID: { type: "Block", value: node },
-        bgColor: "#ffffff",
-      },
-    };
-  });
-  const flowEdges: FlowEdge[] = edges.map((edge) => ({
-    id: `${edge[0]}->${edge[1]}`,
-    source: edge[0],
-    target: edge[1],
-    data: {
-      mainPaths: [],
-      arrowPaths: [],
-      labelX: 0,
-      labelY: 0,
-      label: "",
-    },
-  }));
-  return layoutSimpleFlow(flowNodes, flowEdges);
+import type { IRState } from "../../ir/state";
+import type { FlowEdge } from "../Edge";
+import type { FlowElemNode } from "../Node";
+import { dagreLayoutFlow, type FlowGraph } from "./layout";
+
+function focusedBlock(focusPath: IRObjPath): BlockID | null {
+    const current = focusPath[focusPath.length - 1];
+    if (!current || current.type !== "Block") return null;
+    return current.value;
 }
 
-export async function renderDominanceOfFunc(
-  module: ModuleCache,
-  focusBB: BlockID | null,
-  func: GlobalID,
-): Promise<[FlowNode[], FlowEdge[]] | null> {
-  if (module === null) {
-    throw new Error("No module loaded");
-  }
-  const dominance = makeDominatorTree(module.moduleId, func);
-  if (!dominance) {
-    return null;
-  }
-  return await renderDominatiorTree(module, focusBB, dominance);
+function makeNodes(nodes: DomTreeNode[], focusBlock: BlockID | null): FlowElemNode[] {
+    return nodes.map((node) => ({
+        id: node.id,
+        type: "elemNode",
+        position: { x: 0, y: 0 },
+        width: 160,
+        height: 50,
+        data: {
+            label: node.label,
+            focused: node.id === focusBlock,
+            irObjID: { type: "Block", value: node.id },
+            bgColor: node.id === focusBlock ? "#dbeafe" : "#ffffff",
+        },
+    }));
+}
+
+function makeEdges(edges: DomTreeEdge[]): FlowEdge[] {
+    return edges.map((edge, index) => ({
+        id: `dom:${edge.from}->${edge.to}:${index}`,
+        source: edge.from,
+        target: edge.to,
+        type: "FlowEdge",
+        label: "",
+        style: {
+            stroke: "#475569",
+            strokeWidth: 1.2,
+        },
+        data: {
+            path: "",
+            labelPosition: { x: 0, y: 0 },
+            isFocused: false,
+        },
+    }));
+}
+
+export function getFuncDominance(irState: IRState, funcID: GlobalID): FlowGraph {
+    const dom = irState.getFuncDominance(funcID);
+    const focusBlockID = focusedBlock(irState.focus);
+    const nodes = makeNodes(dom.nodes, focusBlockID);
+    const edges = makeEdges(dom.edges);
+    dagreLayoutFlow(nodes, edges);
+    return { nodes, edges };
 }

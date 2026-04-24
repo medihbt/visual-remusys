@@ -1,229 +1,140 @@
-html,
-body,
-#root {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-
-/* Ensure root fills viewport so percentage heights inside React app work */
-html, body, #root {
-    height: 100%;
-}
-.logo {
-    height: 6em;
-    padding: 1.5em;
-    will-change: filter;
-    transition: filter 300ms;
-}
-.logo:hover {
-    filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-    filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-    a:nth-of-type(2) .logo {
-        animation: logo-spin infinite 20s linear;
-    }
-}
-
-.card {
-    padding: 2em;
-}
-
-.read-the-docs {
-    color: #888;
-}
-
-/* Layout for IR Lens */
 .app-root {
     width: 100vw;
     height: 100vh;
-    margin: 0;
-    padding: 0;
-    font-family:
-        Inter,
-        ui-sans-serif,
-        system-ui,
-        -apple-system,
-        "Segoe UI",
-        Roboto,
-        "Helvetica Neue",
-        Arial;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
     color: #111827;
-    display: flex;
-    flex-direction: column;
+    font-family: "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
 }
-.app-header {
-    height: 56px;
+
+.top-menu {
+    height: 36px;
     display: flex;
     align-items: center;
-    padding: 0 12px;
-    font-weight: 600;
-    border-bottom: 1px solid #e6e6e6;
-}
-.app-main {
-    display: flex;
-    flex: 1 1 auto;
-    gap: 0; /* no space between panels */
-    width: 100%;
-    height: calc(100vh - 56px);
-}
-.left-panel {
-    flex: 1.2;
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid #e5e7eb;
-    overflow: hidden;
+    justify-content: space-between;
+    padding: 0 10px;
+    background: #efefef;
+    border-bottom: 1px solid #d1d5db;
 }
 
-/* Left panel visual polish */
-.left-panel {
-    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-    min-width: 320px;
+.top-menu__left {
+    font-size: 12px;
+    color: #374151;
+    letter-spacing: 0.2px;
 }
 
-.left-panel strong {
-    font-weight: 700;
-    color: #000000;
-}
-
-.left-panel .editor-footer {
-    background: #fbfdff;
-    padding-left: 12px;
-    border-top: 1px solid #eef2f7;
-}
-.editor-header {
-    padding: 0 12px;
-    background: #fafafa;
-    border-bottom: 1px solid #eef2f7;
-    font-size: 0.95rem;
-    height: 40px;
-    display: flex;
-    align-items: center;
-}
-.editor-wrap {
-    flex: 1 1 auto;
-    height: 100%;
-}
-.editor-footer {
-    padding: 8px 12px;
-    background: #fff;
-    border-top: 1px solid #eef2f7;
-    font-size: 0.85rem;
-    color: #475569;
-}
-.right-panel {
-    flex: 0.9;
-    display: flex;
-    flex-direction: column;
-}
-.modes {
-    display: flex;
-    gap: 0.5rem;
-    padding: 12px;
-}
-.modes button {
-    padding: 0.45rem 0.7rem;
-    border-radius: 6px;
-    border: 1px solid #ddd;
-    background: #fff;
+.top-menu__item {
+    height: 24px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #374151;
+    font-size: 12px;
+    padding: 0 10px;
     cursor: pointer;
 }
-.modes button.active {
-    background: #111827;
-    color: #fff;
-    border-color: #111827;
+
+.top-menu__item:hover {
+    background: #f9fafb;
 }
-.flow-area {
-    flex: 1 1 auto;
+
+.app-main {
+    flex: 1;
+    min-height: 0;
+}
+
+.panel-left {
+    width: 100%;
+    height: 100%;
+    border-right: 1px solid #d1d5db;
     background: #ffffff;
-    overflow: auto;
+    min-height: 0;
 }
-.flow-placeholder {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    padding: 12px;
+
+.left-top,
+.left-bottom,
+.panel-right {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
 }
-.flow-placeholder.centered {
-    justify-content: center;
-    align-items: center;
+
+.left-top {
+    border-bottom: 1px solid #d1d5db;
 }
-.flow-placeholder.small {
-    gap: 0.5rem;
-}
-.node {
-    padding: 0.6rem 0.8rem;
-    border-radius: 6px;
-    border: 1px solid #cbd5e1;
+
+.panel-right {
+    width: 100%;
+    height: 100%;
     background: #f8fafc;
-    min-width: 80px;
-    text-align: center;
-}
-.node.entry {
-    background: #e6f4ff;
-}
-.node.exit {
-    background: #ffeef0;
-}
-.node.exit.highlight {
-    box-shadow: 0 0 0 3px rgba(255, 200, 200, 0.2);
-}
-.diff-note {
-    color: #475569;
-    font-weight: 500;
-}
-.right-footer {
-    font-size: 0.85rem;
-    color: #64748b;
-    padding: 8px 12px;
 }
 
-@media (max-width: 900px) {
-    .app-main {
-        flex-direction: column;
-        height: auto;
+.pane-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #6b7280;
+    background-image: radial-gradient(circle at 1px 1px, #e5e7eb 1px, transparent 0);
+    background-size: 18px 18px;
+}
+
+.pane-placeholder h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+}
+
+.pane-placeholder p {
+    margin: 0;
+    font-size: 12px;
+}
+
+.guide-view-host {
+    width: 100%;
+    height: 100%;
+    padding: 8px;
+    background: #f9fafb;
+}
+
+.guide-view-shell {
+    width: 100%;
+    height: 100%;
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    display: flex;
+    flex-direction: column;
+}
+
+.guide-view-shell__title {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+    color: #4b5563;
+}
+
+.guide-view-shell__body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    background-image: radial-gradient(circle at 1px 1px, #e5e7eb 1px, transparent 0);
+    background-size: 18px 18px;
+    font-size: 12px;
+}
+
+@media (max-width: 960px) {
+    .panel-left {
+        border-right: none;
+        border-bottom: 1px solid #d1d5db;
     }
-    .right-panel {
-        order: 2;
-    }
-}
-
-/* Show React Flow connection handles for GuideView */
-.guide-view .react-flow__handle,
-.guide-view .xyflow__handle,
-.guide-view .react-flow__handle-top,
-.guide-view .react-flow__handle-bottom,
-.guide-view .react-flow__handle-left,
-.guide-view .react-flow__handle-right {
-    display: block !important;
-    width: 8px !important;
-    height: 8px !important;
-    background-color: #94a3b8 !important;
-    border: 1px solid white !important;
-    border-radius: 50% !important;
-}
-
-/* Node label styling: use monospace Cascadia, smaller, centered, and hide overflow */
-.react-flow__node {
-    font-family: var(--mono-font) !important;
-    font-size: 0.65rem !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    text-align: center !important;
-    overflow: hidden !important;
-    white-space: nowrap !important;
-    text-overflow: ellipsis !important;
-    padding: 0 !important;
-}
-
-.react-flow__node * {
-    box-sizing: border-box !important;
 }

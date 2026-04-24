@@ -1,138 +1,121 @@
-import type { BlockID, GlobalID, JTKind, JumpTargetID } from "../../ir/ir";
-import { ModuleCache } from "../../ir/ir-state";
-import type { FlowEdge } from "../components/Edge";
-import type { FlowElemNode, FlowNode } from "../components/Node";
-import { layoutSimpleFlow } from "./layout";
+import type {
+	BlockID,
+	CfgEdgeDfsRole,
+	CfgEdgeDt,
+	CfgNodeDt,
+	GlobalID,
+	IRObjPath,
+	JumpTargetID,
+	JumpTargetKind,
+} from "remusys-wasm";
 
-export type CfgNodeKind = "Entry" | "Control" | "Exit";
-export type CfgNode = {
-  id: BlockID;
-  label: string;
-  kind: CfgNodeKind;
-};
-export type CfgEdge = {
-  id: JumpTargetID;
-  from: BlockID;
-  to: BlockID;
-  kind: JTKind;
+import type { IRState } from "../../ir/state";
+import type { FlowEdge } from "../Edge";
+import type { FlowElemNode } from "../Node";
+import { dagreLayoutFlow, type FlowGraph } from "./layout";
+
+type FocusTarget = {
+	block: BlockID | null;
+	edge: JumpTargetID | null;
 };
 
-const strokeColors = {
-  Jump: "#222",
-  BrThen: "#16a34a",
-  BrElse: "#dc2626",
-  SwitchDefault: "#2563eb",
-  SwitchCase: "#d97706",
-};
-function getStrokeColor(kind: JTKind): string {
-  const kindSeg0 = kind.split(":")[0];
-  return strokeColors[kindSeg0 as keyof typeof strokeColors] ?? "#222";
+function extractFocusTarget(focusPath: IRObjPath): FocusTarget {
+	const current = focusPath[focusPath.length - 1];
+	if (!current || current.type === "Module") {
+		return { block: null, edge: null };
+	}
+	if (current.type === "Block") {
+		return { block: current.value, edge: null };
+	}
+	if (current.type === "Inst") {
+		const current = focusPath[focusPath.length - 2];
+		if (current && current.type === "Block") {
+			return { block: current.value, edge: null };
+		} else {
+			return { block: null, edge: null };
+		}
+	}
+	if (current.type === "JumpTarget") {
+		return { block: null, edge: current.value };
+	}
+	return { block: null, edge: null };
 }
 
-export function makeCfg(
-  module: ModuleCache,
-  func: GlobalID,
-): [CfgNode[], CfgEdge[]] | null {
-  const funcDt = module.loadGlobal(func);
-  if (funcDt.typeid !== "Func") return null;
-  if (!funcDt.blocks) return null;
-  const entryNode = funcDt.blocks[0];
-  const nodes: CfgNode[] = [
-    {
-      id: entryNode.id,
-      label: entryNode.name ?? entryNode.id,
-      kind: "Entry",
-    },
-  ];
-  const edges: CfgEdge[] = module.getBlockSuccessors(entryNode).map((jt) => {
-    return { id: jt.id, from: entryNode.id, to: jt.target, kind: jt.kind };
-  });
-
-  for (let i = 1; i < funcDt.blocks.length; i++) {
-    const block = funcDt.blocks[i];
-    const succs = module.getBlockSuccessors(block);
-    const kind: CfgNodeKind = succs.length === 0 ? "Exit" : "Control";
-    nodes.push({
-      id: block.id,
-      label: block.name ?? block.id,
-      kind,
-    });
-    for (const jt of succs) {
-      const edge: CfgEdge = {
-        id: jt.id,
-        from: block.id,
-        to: jt.target,
-        kind: jt.kind,
-      };
-      edges.push(edge);
-    }
-  }
-  return [nodes, edges];
+function cfgNodeColor(node: CfgNodeDt): string {
+	switch (node.role) {
+		case "Entry":
+			return "#d1fae5";
+		case "Exit":
+			return "#fee2e2";
+		case "Branch":
+			return "#ffffff";
+	}
 }
 
-export async function renderCfgToFlow(
-  nodes: CfgNode[],
-  edges: CfgEdge[],
-  focusBlock: BlockID | null,
-  focusEdge: JumpTargetID | null,
-): Promise<[FlowNode[], FlowEdge[]]> {
-  const flowNodes: FlowElemNode[] = nodes.map((n) => {
-    let bgColor: string;
-    switch (n.kind) {
-      case "Entry":
-        bgColor = "#d1fae5";
-        break;
-      case "Exit":
-        bgColor = "#fee2e2";
-        break;
-      default:
-        bgColor = "#ffffff";
-        break;
-    }
-    return {
-      id: n.id as string,
-      position: { x: 0, y: 0 },
-      type: "elemNode",
-      data: {
-        label: n.label,
-        focused: n.id === focusBlock,
-        irObjID: { type: "Block", value: n.id },
-        bgColor: bgColor,
-      },
-      width: 120,
-      height: 45,
-    };
-  });
-  const flowEdges: FlowEdge[] = edges.map((e) => {
-    const isSelected = e.id === focusEdge;
-    return {
-      id: e.id as string,
-      source: e.from as string,
-      target: e.to as string,
-      type: "flowEdge",
-      data: {
-        mainPaths: [],
-        arrowPaths: [],
-        labelX: 0,
-        labelY: 0,
-        label: e.kind,
-        irObjID: { type: "JumpTarget", value: e.id },
-        strokeColor: getStrokeColor(e.kind),
-        isFocused: isSelected,
-      },
-    };
-  });
-  return layoutSimpleFlow(flowNodes, flowEdges);
+function cfgEdgeColor(kind: JumpTargetKind): string {
+	if (kind === "BrThen") return "#16a34a";
+	if (kind === "BrElse") return "#dc2626";
+	if (kind === "SwitchDefault") return "#2563eb";
+	if (kind.startsWith("SwitchCase:")) return "#d97706";
+	return "#222222";
 }
 
-export async function renderCfgOfFunc(
-  module: ModuleCache,
-  func: GlobalID,
-  focusBlock: BlockID | null,
-  focusEdge: JumpTargetID | null,
-): Promise<[FlowNode[], FlowEdge[]] | null> {
-  const cfg = makeCfg(module, func);
-  if (!cfg) return null;
-  const [nodes, edges] = cfg;
-  return await renderCfgToFlow(nodes, edges, focusBlock, focusEdge);
+function cfgEdgeDash(role: CfgEdgeDfsRole): string | undefined {
+	if (role === "Back") return "6 3";
+	if (role === "Forward") return "4 2";
+	if (role === "Cross") return "4 4";
+	if (role === "SelfRing") return "3 3";
+	return undefined;
+}
+
+function makeFlowNodes(nodes: CfgNodeDt[], focus: FocusTarget): FlowElemNode[] {
+	return nodes.map((node) => ({
+		id: node.block,
+		position: { x: 0, y: 0 },
+		type: "elemNode",
+		width: 160,
+		height: 50,
+		data: {
+			label: node.label,
+			focused: focus.block === node.block,
+			irObjID: { type: "Block", value: node.block },
+			bgColor: cfgNodeColor(node),
+		},
+	}));
+}
+
+function makeFlowEdges(edges: CfgEdgeDt[], focus: FocusTarget): FlowEdge[] {
+	return edges.map((edge) => {
+		const dash = cfgEdgeDash(edge.dfs_role);
+		return {
+			id: edge.id,
+			source: edge.from,
+			target: edge.to,
+			type: "FlowEdge",
+			label: edge.jt_kind,
+			style: {
+				stroke: cfgEdgeColor(edge.jt_kind),
+				strokeDasharray: dash,
+				strokeWidth: edge.id === focus.edge ? 1.5 : 1,
+			},
+			labelStyle: {
+				fill: edge.id === focus.edge ? "#222222" : "#888888",
+			},
+			data: {
+				path: "",
+				labelPosition: { x: 0, y: 0 },
+				isFocused: focus.edge === edge.id,
+				irObjID: { type: "JumpTarget", value: edge.id },
+			},
+		};
+	});
+}
+
+export function getFuncCfg(irState: IRState, funcID: GlobalID): FlowGraph {
+	const dto = irState.getFuncCfg(funcID);
+	const focus = extractFocusTarget(irState.focus);
+	const nodes = makeFlowNodes(dto.nodes, focus);
+	const edges = makeFlowEdges(dto.edges, focus);
+	dagreLayoutFlow(nodes, edges);
+	return { nodes, edges };
 }

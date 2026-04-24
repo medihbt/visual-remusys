@@ -1,9 +1,9 @@
 import React from "react";
-import type { SourceTy } from "./ir/ir";
+import type { SourceTy } from "remusys-wasm";
 import { handleFileLoad } from "./file-load";
 
 export interface FileLoaderProps {
-  onLoad: (mode: SourceTy, text: string) => void;
+  onLoad: (mode: SourceTy, text: string, filename: string) => void;
 }
 
 export const FileLoader: React.FC<FileLoaderProps> = ({ onLoad }) => {
