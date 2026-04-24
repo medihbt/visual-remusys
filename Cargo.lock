@@ -525,25 +525,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "remusys-wasm"
-version = "0.1.0"
-dependencies = [
- "mtb-entity-slab",
- "regex",
- "remusys-ir",
- "remusys-ir-parser",
- "remusys-lang",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "smallvec",
- "smol_str",
- "thiserror",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "remusys-wasm-b2"
 version = "0.2.0"
 dependencies = [
