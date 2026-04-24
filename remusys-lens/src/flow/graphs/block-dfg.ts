@@ -146,7 +146,7 @@
  *   避免阻塞 UI。
  */
 
-import Elk from "elkjs";
+import Elk from "elkjs/lib/elk.bundled.js";
 import type { ElkEdgeSection, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 import type {
     BlockDfg,
