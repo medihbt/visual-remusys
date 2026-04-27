@@ -303,7 +303,7 @@ impl SourcePosIndex {
         Self::new(0, 0)
     }
 
-    /// 基于当前位置往前数 delta 个位置, 计算出新的位置.
+    /// 基于当前位置往前数 delta 个位置, 计算出新的位置. 你可以粗略不严谨地理解为 `self + delta`.
     ///
     /// 注意, 这个 advance 不符合交换律, 因此 SourcePosIndex 没有实现 `Add` trait.
     pub fn advance(self, delta: Self) -> Self {
@@ -314,7 +314,9 @@ impl SourcePosIndex {
         }
     }
 
-    /// 计算从当前位置到目标位置的 delta. 注意, 这个 delta 不符合交换律, 因此 SourcePosIndex 没有实现 `Sub` trait.
+    /// 计算从当前位置到目标位置的 delta. 你可以粗略不严谨地理解为 `other - self`.
+    ///
+    /// 注意, 这个 delta 不符合交换律, 因此 SourcePosIndex 没有实现 `Sub` trait.
     pub fn delta_to(self, other: Self) -> Result<Self, JsError> {
         let Self {
             line: bline,
@@ -822,7 +824,12 @@ impl IRTree {
             if !(start <= pos && pos < end) {
                 break;
             }
-            pos = pos.delta_to(start)?;
+            pos = match start.delta_to(pos) {
+                Ok(delta) => delta,
+                Err(_) => {
+                    return fmt_jserr!(Err "invalid position ({start:?} - {pos:?}); path: {:?}", path);
+                }
+            };
             curr = child;
             path.push(child);
         }

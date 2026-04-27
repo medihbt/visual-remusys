@@ -13,3 +13,37 @@
   border-bottom: 1px dashed rgba(100, 116, 139, 0.85);
   border-radius: 1px;
 }
+
+.source-rename-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  padding: 6px 8px;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  background: #1f2937;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.35);
+}
+
+.source-rename-input {
+  width: 100%;
+  border: 1px solid #60a5fa;
+  border-radius: 4px;
+  padding: 4px 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font: inherit;
+  outline: none;
+}
+
+.source-rename-input:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.5);
+}
+
+.source-rename-hint {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.2;
+}

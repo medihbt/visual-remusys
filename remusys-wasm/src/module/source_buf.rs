@@ -77,7 +77,9 @@ impl SourceLine {
         if self.is_ascii && utf16_col < self.buffer.len() as u32 {
             // For ASCII lines, UTF-16 column and byte column are the same
             return Ok(utf16_col);
-        } else if utf16_col >= self.buffer.len() as u32 {
+        } else if self.is_ascii && utf16_col == self.buffer.len() as u32 {
+            return Ok(self.buffer.len() as u32);
+        } else if utf16_col > self.buffer.len() as u32 {
             return fmt_jserr!(Err "invalid UTF-16 column: {utf16_col} exceeds line length");
         }
 
