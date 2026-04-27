@@ -56,6 +56,8 @@ function buildMenuItems(
   let items: NodeMenuItem[];
   switch (node.kind) {
     case "Module":
+      items = baseItems.filter(item => item.label !== "收起结点");
+      break;
     case "Func": case "GlobalVar":
     case "Block":
     case "NormalInst": case "TerminatorInst": case "PhiInst": {

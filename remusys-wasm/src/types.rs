@@ -53,6 +53,9 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "IRTreeObjID")]
     pub type JsTreeObjID;
 
+    #[wasm_bindgen(typescript_type = "IRTreeObjName")]
+    pub type JsTreeObjName;
+
     #[wasm_bindgen(typescript_type = "IRObjPath")]
     pub type JsIRObjPath;
 

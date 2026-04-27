@@ -66,13 +66,12 @@ export function NodeMenu(props: NodeMenuProps) {
           key={`${item.label}-${idx}`}
           onClick={() => handleSelect(item)}
           style={{
-            padding: "10px 15px",
+            padding: "6px 15px",
             cursor: item.disabled ? "not-allowed" : "pointer",
             fontSize: "13px",
             color: item.disabled ? "#9ca3af" : "#4b5563",
             backgroundColor: "#ffffff",
             transition: "background-color 0.1s",
-            borderTop: idx === 0 ? "none" : "1px solid #e5e7eb",
           }}
           onMouseEnter={(e) => {
             if (!item.disabled) {
@@ -90,12 +89,11 @@ export function NodeMenu(props: NodeMenuProps) {
       <div
         onClick={onClose}
         style={{
-          padding: "10px 15px",
+          padding: "6px 15px",
           cursor: "pointer",
           fontSize: "13px",
           color: "#9ca3af",
           borderTop: "1px solid #e5e7eb",
-          textAlign: "center",
         }}
       >
         取消

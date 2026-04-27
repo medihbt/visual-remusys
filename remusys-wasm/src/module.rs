@@ -17,13 +17,14 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use wasm_bindgen::{JsError, JsValue, prelude::wasm_bindgen};
 
 use crate::{
-    CallGraphDt, DomTreeDt, IRTreeBuilder, IRObjPathBuf, IRTree, IRTreeObjID, SourceBuf,
+    CallGraphDt, DomTreeDt, IRObjPathBuf, IRTree, IRTreeBuilder, IRTreeObjID, SourceBuf,
     dto::{IRTreeNodeDt, cfg::FuncCfgDt, defuse_graph::DefUseGraphDt, dfg::BlockDfg},
     fmt_jserr,
     rename::IRRename,
     types::{
         JsBlockDfg, JsCallGraphDt, JsDefUseGraph, JsDomTreeDt, JsFuncCfgDt, JsIRObjPath,
         JsIRTreeNodeDt, JsIRTreeNodes, JsMonacoSrcPos, JsRenameRes, JsScopeID, JsTreeObjID,
+        JsTreeObjName,
     },
 };
 
@@ -363,6 +364,26 @@ impl ModuleInfo {
             });
         }
         Self::serialize(&res)
+    }
+
+    /// 通过一个 IR 对象 ID 获取它的名称. 这个名称不是 IR 中的原始名称, 而是一个适合展示的名称.
+    ///
+    /// 例如, 函数 `main` 的展示名称是 `@main`, 基本块 `bb1` 的展示名称是 `%bb1`, 指令 `a` 的展示名称是 `%a`.
+    pub fn get_object_display_name(&self, object_id: JsTreeObjID) -> Result<String, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let name = object.get_name(self)?;
+        Ok(name.to_string())
+    }
+
+    /// 通过一个 IR 对象 ID 获取它的真实名称. 这个名称是 IR 中的原始名称, 不带任何前缀修饰.
+    /// 例如, 函数 `main` 的真实名称是 `main`, 基本块 `bb1` 的真实名称是 `bb1`, 指令 `a` 的真实名称是 `a`.
+    pub fn get_object_identity_name(
+        &self,
+        object_id: JsTreeObjID,
+    ) -> Result<JsTreeObjName, JsError> {
+        let object: IRTreeObjID = Self::deserialize(object_id)?;
+        let name = object.get_identity_name(self)?;
+        Self::serialize(&name)
     }
 
     /// 重命名一个 IR 对象（函数、基本块、指令等）. JS 侧需要废弃所有缓存, 重新构建 IRDag 和相关数据结构.

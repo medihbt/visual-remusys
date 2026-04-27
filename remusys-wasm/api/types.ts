@@ -73,6 +73,16 @@ export type IRTreeObjID =
     | { type: "BlockIdent"; value: BlockID }
     ;
 
+export type IRTreeObjName =
+    | { type: "Unnamed" }
+    | { type: "NotNameable" }
+    | { type: "Module"; value: string }
+    | { type: "Global"; value: string }
+    | { type: "Local"; value: string }
+    | { type: "UseGlobal"; value: string }
+    | { type: "UseLocal"; value: string }
+    ;
+
 export type IRObjPath = IRTreeObjID[];
 
 export type IRTreeNodeClass =

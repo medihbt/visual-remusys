@@ -1,9 +1,10 @@
-import { ModuleInfo } from "remusys-wasm";
+import { IRTreeCursor, ModuleInfo } from "remusys-wasm";
 import type {
     IRTreeNodeDt, IRObjPath, MonacoSrcRange, SourceTy, CallGraphDt,
     FuncCfgDt, GlobalID, DomTreeDt, BlockDfg, BlockID,
     InstID,
-    DefUseGraph
+    DefUseGraph,
+    RenameRes
 } from "remusys-wasm";
 
 import { create } from "zustand";
@@ -22,6 +23,11 @@ export interface IRActions {
     getModule: () => ModuleInfo;
     setFocus: (path: IRObjPath) => void;
     clearFocus: () => void;
+
+    /**
+     * 重命名一个 IR 对象（函数、基本块、指令等）. JS 侧需要废弃所有缓存, 重新构建 IRDag 和相关数据结构.
+     */
+    rename: (object_id: IRObjPath, new_name: string) => RenameRes;
 
     getTreeChildren(path: IRObjPath): IRTreeNodeDt[];
 
@@ -43,7 +49,11 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
     compile(src_kind, src, filename) {
         const module_name = filename ?? "input";
         const module = ModuleInfo.compile_from(src_kind, src, module_name);
-        set({ module, source: module.dump_source(), focus: [{ type: "Module" }] });
+        set({
+            module,
+            source: module.dump_source(),
+            focus: [{ type: "Module" }],
+        });
         return module;
     },
     getFocusSrcRange(): MonacoSrcRange {
@@ -73,6 +83,26 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
             throw new Error("module not loaded");
         }
         return module.ir_tree_get_children(path);
+    },
+
+    rename(object_id, new_name) {
+        const { module } = get();
+        if (!module) {
+            throw new Error("module not loaded");
+        }
+        const res = module.rename(object_id, new_name);
+        if (res.type !== "Renamed")
+            return res;
+
+        const focus = get().focus;
+        const newFocus = sliceValidObjPath(module, get().focus);
+        const source = module.dump_source();
+        if (isSamePath(newFocus, focus)) {
+            set({ source });
+        } else {
+            set({ focus: newFocus, source });
+        }
+        return res;
     },
 
     getCallGraph(): CallGraphDt {
@@ -111,6 +141,32 @@ export const useIRStore = create<IRState>()(devtools(immer((set, get) => ({
         return module.get_def_use_graph(center)
     },
 }))));
+
+/**
+ * 从一个 IR 对象路径中切出一个有效的路径. 例如, 如果当前 IR 中没有 `@main` 这个函数, 那么路径 `[@main, %bb1]` 就是无效的.
+ * 
+ * @param module 当前的 IR 模块.
+ * @param path 传入的 IR 对象路径.
+ * @returns 如果 path 是有效的, 则返回原路径; 否则返回一个有效的子路径.
+ */
+export function sliceValidObjPath(module: ModuleInfo, path: IRObjPath): IRObjPath {
+    const length = path.length;
+    const cursor = new IRTreeCursor(module);
+    let cnt = 1;
+    try {
+        while (cnt < length && cursor.has_child(module, path[cnt])) {
+            cursor.goto_child(module, path[cnt]);
+            cnt++;
+        }
+    } finally {
+        cursor.free();
+    }
+    if (cnt === length) {
+        return path;
+    } else {
+        return path.slice(0, cnt);
+    }
+}
 
 export function useIRFocus(): IRObjPath { return useIRStore().focus }
 export function useIRModule(): ModuleInfo { return useIRStore().getModule() }

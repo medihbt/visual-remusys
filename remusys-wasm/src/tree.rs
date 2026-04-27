@@ -60,8 +60,8 @@ use std::{
 use hashbrown::HashMap as BrownMap;
 use mtb_entity_slab::{EntityAlloc, GenIndex, IEntityAllocID, IPoliciedID, IndexedID, entity_id};
 use remusys_ir::ir::{
-    BlockID, GlobalID, GlobalObj, ISubGlobalID, ISubInst, ISubInstID, InstID, InstObj,
-    JumpTargetID, UseID, ValueSSA,
+    BlockID, FuncArgID, FuncID, GlobalID, GlobalObj, ISubGlobal, ISubGlobalID, ISubInst,
+    ISubInstID, InstID, InstObj, JumpTargetID, UseID, ValueSSA,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
@@ -122,7 +122,29 @@ pub enum IRTreeObjID {
     BlockIdent(BlockID),
 }
 
+/// IR 对象的真实名称, 不带任何前缀修饰
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(tag = "type", content = "value")]
+pub enum IRTreeObjName {
+    /// 这个对象可以通过重命名获得名称, 但是它现在没有名称. 例如一个匿名的基本块, 它可以被命名为 `%bb1`, 但是现在还没有名字.
+    Unnamed,
+    /// 这个对象不能被命名. 例如一个常量表达式, 它没有名字, 也不能被命名.
+    NotNameable,
+    /// 模块对象, 主干树模式. 例如 `Module main`
+    Module(String),
+    /// 全局对象, 主干树模式. 例如 `@main`
+    Global(SmolStr),
+    /// 函数参数、基本块、指令等局部对象, 主干树模式. 例如 `%arg1`, `%bb1`, `%inst1`
+    Local(SmolStr),
+    /// 操作数边连接的目标全局对象名称, 主干树之外. 例如 `@main` 作为某个指令的操作数边连接的目标对象名称.
+    UseGlobal(SmolStr),
+    /// 操作数边连接的目标局部对象名称, 主干树之外. 例如 `%bb1` 作为某个指令的操作数边连接的目标对象名称.
+    UseLocal(SmolStr),
+}
+
 impl IRTreeObjID {
+    /// 获取 IR 对象的展示名称, 带上前缀修饰. 例如函数 `main` 的展示名称是 `@main`,
+    /// 基本块 `bb1` 的展示名称是 `%bb1`, 指令 `a` 的展示名称是 `%a`.
     pub fn get_name(&self, ir: &ModuleInfo) -> Result<SmolStr, JsError> {
         let name = match self {
             IRTreeObjID::Module => format_smolstr!("Module {}", ir.module().name),
@@ -190,6 +212,73 @@ impl IRTreeObjID {
             }
         };
         Ok(res)
+    }
+
+    /// 获取不带修饰的真实名称.
+    pub fn get_identity_name(&self, ir: &ModuleInfo) -> Result<IRTreeObjName, JsError> {
+        let res = match *self {
+            IRTreeObjID::Module => IRTreeObjName::Module(ir.module().name.clone()),
+            IRTreeObjID::Global(global_id) | IRTreeObjID::FuncHeader(global_id) => {
+                let Some(global_obj) = global_id.try_deref_ir(ir.module()) else {
+                    return fmt_jserr!(Err "global {global_id:?} does not exist");
+                };
+                IRTreeObjName::Global(global_obj.clone_name())
+            }
+            IRTreeObjID::FuncArg(func_id, index) => {
+                let Some(func_id) = FuncID::try_from_global(ir.module(), func_id) else {
+                    return fmt_jserr!(Err "function {func_id:?} does not exist");
+                };
+                match ir.names().get_local_name(FuncArgID(func_id, index)) {
+                    Some(name) => IRTreeObjName::Local(name),
+                    None => IRTreeObjName::Unnamed,
+                }
+            }
+            IRTreeObjID::Block(block_id) | IRTreeObjID::BlockIdent(block_id) => {
+                js_assert!(block_id.is_alive(ir.module()))?;
+                match ir.names().get_local_name(block_id) {
+                    Some(name) => IRTreeObjName::Local(name),
+                    None => IRTreeObjName::Unnamed,
+                }
+            }
+            IRTreeObjID::Inst(inst_id) => {
+                js_assert!(inst_id.is_alive(ir.module()))?;
+                match ir.names().get_local_name(inst_id) {
+                    Some(name) => IRTreeObjName::Local(name),
+                    None => IRTreeObjName::Unnamed,
+                }
+            }
+            IRTreeObjID::Use(use_id) => {
+                let module = ir.module();
+                js_assert!(use_id.is_alive(module))?;
+                let value = use_id.get_operand(module);
+                Self::realname_of_value(ir, value)?
+            }
+            IRTreeObjID::JumpTarget(jt_id) => {
+                let module = ir.module();
+                js_assert!(jt_id.is_alive(module))?;
+                let Some(block) = jt_id.get_block(module) else {
+                    return fmt_jserr!(Err "jump target {jt_id:?} does not have a valid block");
+                };
+                Self::realname_of_value(ir, ValueSSA::Block(block))?
+            }
+        };
+        Ok(res)
+    }
+
+    fn realname_of_value(ir: &ModuleInfo, value: ValueSSA) -> Result<IRTreeObjName, JsError> {
+        let name = match value {
+            ValueSSA::FuncArg(..) | ValueSSA::Block(_) | ValueSSA::Inst(_) => {
+                match ir.names().get_local_name(value) {
+                    Some(name) => IRTreeObjName::UseLocal(name),
+                    None => IRTreeObjName::Unnamed,
+                }
+            }
+            ValueSSA::Global(global_id) => {
+                IRTreeObjName::UseGlobal(global_id.clone_name(&ir.module))
+            }
+            _ => IRTreeObjName::NotNameable,
+        };
+        Ok(name)
     }
 }
 
