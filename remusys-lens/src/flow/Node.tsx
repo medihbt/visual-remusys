@@ -1,4 +1,9 @@
-import { type Node as RFNode, type NodeProps, Handle, Position } from "@xyflow/react";
+import {
+  type Node as RFNode,
+  type NodeProps,
+  Handle,
+  Position,
+} from "@xyflow/react";
 
 import type { IRTreeObjID } from "remusys-wasm";
 
@@ -7,7 +12,7 @@ export type FlowNodeBase = {
   focused: boolean;
   irObjID: IRTreeObjID | null;
   bgColor: string;
-}
+};
 export type FlowElemNodeData = FlowNodeBase;
 export type FlowGroupNodeData = FlowNodeBase;
 
@@ -51,7 +56,7 @@ function nodeStyle(selected: boolean, color: string): React.CSSProperties {
   return Object.assign({ backgroundColor: color }, node);
 }
 
-const ElemNode: React.FC<FlowElemNodeProps> = ({ data }) => {
+export const ElemNode: React.FC<FlowElemNodeProps> = ({ data }) => {
   const selected = data?.focused || false;
   const color = data?.bgColor || "#e0e0e0";
 
@@ -66,8 +71,8 @@ const ElemNode: React.FC<FlowElemNodeProps> = ({ data }) => {
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
-}
-const GroupNode: React.FC<FlowGroupNodeProps> = ({ data }) => {
+};
+export const GroupNode: React.FC<FlowGroupNodeProps> = ({ data }) => {
   const selected = data?.focused || false;
   const color = data?.bgColor || "#e0e0e0";
 
@@ -90,9 +95,4 @@ const GroupNode: React.FC<FlowGroupNodeProps> = ({ data }) => {
       />
     </div>
   );
-}
-
-export const FlowNodeTypes = {
-  elemNode: ElemNode,
-  groupNode: GroupNode,
-}
+};

@@ -5,7 +5,12 @@ import { editor, KeyCode } from "monaco-editor";
 import { useIRStore } from "../ir/state";
 import llvmMonarch from "./llvmMonarch.ts";
 import "./SourceView.css";
-import { IRTreeCursor, ModuleInfo, type IRObjPath, type MonacoSrcRange } from "remusys-wasm";
+import {
+  IRTreeCursor,
+  ModuleInfo,
+  type IRObjPath,
+  type MonacoSrcRange,
+} from "remusys-wasm";
 import { RenameInputWidget, type RenameInputState } from "./RenameInput.tsx";
 
 function handleEditorMount(
@@ -32,7 +37,10 @@ function handleEditorMount(
   monacoRef.current = monaco;
 }
 
-function getReferenceSourceRanges(module: ModuleInfo, focus: IRObjPath): MonacoSrcRange[] {
+function getReferenceSourceRanges(
+  module: ModuleInfo,
+  focus: IRObjPath,
+): MonacoSrcRange[] {
   const cursor = IRTreeCursor.from_path(module, focus);
   let ranges: MonacoSrcRange[] = [];
   try {
@@ -115,7 +123,8 @@ export default function SourceView() {
         case "Local":
         case "UseGlobal":
         case "UseLocal":
-          initialValue = identityName.value; break;
+          initialValue = identityName.value;
+          break;
         case "NotNameable":
           alert("无法重命名该对象");
           return;
@@ -137,59 +146,76 @@ export default function SourceView() {
     }
   }, [irStore, editorRef]);
 
-  const addActions = useCallback((ed: editor.IStandaloneCodeEditor) => {
-    const focusAction = ed.addAction({
-      id: "remusys.focus-on-selection",
-      label: "聚焦选区",
-      contextMenuGroupId: "navigation",
-      contextMenuOrder: 1.5,
-      run: () => { focusOnSelection(); },
-    });
+  const addActions = useCallback(
+    (ed: editor.IStandaloneCodeEditor) => {
+      const focusAction = ed.addAction({
+        id: "remusys.focus-on-selection",
+        label: "聚焦选区",
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.5,
+        run: () => {
+          focusOnSelection();
+        },
+      });
 
-    const renameAction = ed.addAction({
-      id: "remusys.rename-selection",
-      label: "重命名",
-      contextMenuGroupId: "modification",
-      contextMenuOrder: 1.5,
-      keybindings: [KeyCode.F2],
-      run: () => { openRenameInput(); },
-    });
+      const renameAction = ed.addAction({
+        id: "remusys.rename-selection",
+        label: "重命名",
+        contextMenuGroupId: "modification",
+        contextMenuOrder: 1.5,
+        keybindings: [KeyCode.F2],
+        run: () => {
+          openRenameInput();
+        },
+      });
 
-    return () => {
-      renameAction.dispose();
-      focusAction.dispose();
-    };
-  }, [focusOnSelection, openRenameInput]);
+      return () => {
+        renameAction.dispose();
+        focusAction.dispose();
+      };
+    },
+    [focusOnSelection, openRenameInput],
+  );
 
-  const handleRenameSubmit = useCallback((renameState: RenameInputState) => {
-    const { path, value } = renameState;
-    const res = irStore.rename(path, value);
-    switch (res.type) {
-      case "Renamed":
-      case "NoChange":
-        break;
-      case "GlobalNameConflict":
-      case "LocalNameConflict":
-        alert(`重命名失败: 已存在同名对象"`);
-        break;
-      case "UnnamedObject":
-        alert(`重命名失败: 该对象没有名称, 无法重命名`);
-        break;
-      default:
-        alert(`重命名失败: ${res}`);
-    }
-  }, [irStore]);
+  const handleRenameSubmit = useCallback(
+    (renameState: RenameInputState) => {
+      const { path, value } = renameState;
+      const res = irStore.rename(path, value);
+      switch (res.type) {
+        case "Renamed":
+        case "NoChange":
+          break;
+        case "GlobalNameConflict":
+        case "LocalNameConflict":
+          alert(`重命名失败: 已存在同名对象"`);
+          break;
+        case "UnnamedObject":
+          alert(`重命名失败: 该对象没有名称, 无法重命名`);
+          break;
+        default:
+          alert(`重命名失败: ${res}`);
+      }
+    },
+    [irStore],
+  );
 
   const handleRenameCancel = useCallback(() => {
     // no-op; widget handles its own teardown.
   }, []);
 
-  const handleMount = useCallback((ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
-    handleEditorMount(ed, monaco, editorRef, monacoRef);
-    renameWidgetRef.current?.dispose();
-    renameWidgetRef.current = new RenameInputWidget(ed, handleRenameSubmit, handleRenameCancel);
-    return addActions(ed);
-  }, [addActions, handleRenameCancel, handleRenameSubmit]);
+  const handleMount = useCallback(
+    (ed: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+      handleEditorMount(ed, monaco, editorRef, monacoRef);
+      renameWidgetRef.current?.dispose();
+      renameWidgetRef.current = new RenameInputWidget(
+        ed,
+        handleRenameSubmit,
+        handleRenameCancel,
+      );
+      return addActions(ed);
+    },
+    [addActions, handleRenameCancel, handleRenameSubmit],
+  );
 
   useEffect(() => {
     return () => {
@@ -246,7 +272,7 @@ export default function SourceView() {
     } catch {
       clearDecorations();
     }
-  }, [focus, irStore, clearDecorations]);
+  }, [irStore, clearDecorations]);
 
   return (
     <div className="source-view">

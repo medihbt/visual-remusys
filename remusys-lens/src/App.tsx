@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import type { SourceTy } from "remusys-wasm";
 import { ReflexContainer, ReflexElement, ReflexSplitter } from "react-reflex";
 import "react-reflex/styles.css";
@@ -11,7 +11,11 @@ import FlowViewer from "./flow/FlowViewer";
 
 import "@xyflow/react/dist/style.css";
 import SourceView from "./source_view/SourceView";
-import { clearCachedSource, loadCachedSource, saveCachedSource } from "./source-cache";
+import {
+  clearCachedSource,
+  loadCachedSource,
+  saveCachedSource,
+} from "./source-cache";
 import { useGraphState } from "./flow/state";
 
 type LoadAction = (mode: SourceTy, text: string, filename: string) => void;
@@ -27,7 +31,10 @@ function MainPage({ onLoad }: { onLoad: LoadAction }) {
         <ReflexContainer orientation="vertical" style={{ height: "100%" }}>
           <ReflexElement minSize={50} flex={40}>
             <section className="panel-left">
-              <ReflexContainer orientation="horizontal" style={{ height: "100%" }}>
+              <ReflexContainer
+                orientation="horizontal"
+                style={{ height: "100%" }}
+              >
                 <ReflexElement minSize={50} flex={60}>
                   <SourceView />
                 </ReflexElement>
@@ -52,42 +59,63 @@ function MainPage({ onLoad }: { onLoad: LoadAction }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// One-time synchronous boot — runs once as a useState lazy initializer.
+// NOT an effect, so no setState-inside-effect ESLint warning.
+// In React 18 StrictMode the initializer is guaranteed to execute only once,
+// even though the render function body may be invoked twice.
+// ---------------------------------------------------------------------------
+function tryBoot(): void {
+  const cached = loadCachedSource();
+  if (!cached) return; // no cache → stay on FileLoader
+
+  try {
+    // Access the Zustand store directly — this is the documented escape
+    // hatch for initializing stores outside React's render cycle.
+    const { compile } = useIRStore.getState();
+    const moduleInfo = compile(cached.type, cached.text, cached.filename);
+    useGraphState.getState().initModule(moduleInfo);
+  } catch (error) {
+    clearCachedSource();
+    console.warn(
+      "Failed to restore cached source, fallback to FileLoader",
+      error,
+    );
+    // Store stays empty → FileLoader will be shown.
+  }
+}
+
 function App() {
+  // ── boot — runs exactly once before first commit ──────────────────
+  useState(tryBoot);
+
+  // ── subscriptions ─────────────────────────────────────────────────
   const module = useIRStore((s) => s.module);
   const compile = useIRStore((s) => s.compile);
   const graphState = useGraphState();
-  const [bootChecked, setBootChecked] = useState(false);
 
-  const handleLoad = useCallback<LoadAction>((mode, text, filename) => {
-    const moduleInfo = compile(mode, text, filename);
-    graphState.initModule(moduleInfo);
-    saveCachedSource({ type: mode, text, filename });
-  }, [compile, graphState, module]);
+  // ── user-initiated file load ──────────────────────────────────────
+  const handleLoad = useCallback<LoadAction>(
+    (mode, text, filename) => {
+      try {
+        const moduleInfo = compile(mode, text, filename);
+        graphState.initModule(moduleInfo);
+        saveCachedSource({ type: mode, text, filename });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("Failed to compile source:", message);
+        alert(`编译失败：${message}`);
+      }
+    },
+    [compile, graphState],
+  );
 
-  useEffect(() => {
-    if (bootChecked) return;
-    const cached = loadCachedSource();
-    if (!cached) {
-      setBootChecked(true);
-      return;
-    }
-
-    try {
-      const moduleInfo = compile(cached.type, cached.text, cached.filename);
-      graphState.initModule(moduleInfo);
-    } catch (error) {
-      clearCachedSource();
-      console.warn("Failed to restore cached source, fallback to FileLoader", error);
-    } finally {
-      setBootChecked(true);
-    }
-  }, [bootChecked, compile]);
-
-  if (!bootChecked && !module) {
-    return null;
-  }
-
-  return module ? <MainPage onLoad={handleLoad} /> : <FileLoader onLoad={handleLoad} />;
+  // ── render — no more null guard, boot is already finished ─────────
+  return module ? (
+    <MainPage onLoad={handleLoad} />
+  ) : (
+    <FileLoader onLoad={handleLoad} />
+  );
 }
 
 export default App;

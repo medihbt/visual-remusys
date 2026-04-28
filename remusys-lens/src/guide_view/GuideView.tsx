@@ -1,22 +1,38 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  collapseChildrenNode,
   collapseNode,
   createGuideTreeController,
   dfsExpandNode,
   disposeGuideTreeController,
-  expandNode,
   expandChildrenNode,
+  expandNode,
   refreshSameModule,
   requestFocusNode,
   type GuideTreeController,
-  collapseChildrenNode,
 } from "./guide-view-tree";
-import { collectGuideTree, guideNodeTypes, type GuideRFNode } from "./Node";
+import {
+  collectGuideTree,
+  GuideHandlersContext,
+  type GuideNodeHandlers,
+  type GuideRFNode,
+} from "./GuideContext";
 import { NodeMenu, type NodeMenuItem, type NodeMenuProps } from "./NodeMenu";
 import { useIRStore } from "../ir/state";
 import type { GuideNodeData, GuideNodeExpand } from "remusys-wasm";
-import { useGraphState, type GraphStore, } from "../flow/state";
-import { Background, Controls, ReactFlow, ReactFlowProvider, type Edge } from "@xyflow/react";
+import { useGraphState, type GraphStore } from "../flow/state";
+import {
+  Background,
+  Controls,
+  ReactFlow,
+  ReactFlowProvider,
+  type Edge,
+} from "@xyflow/react";
+import GuideViewNode from "./Node";
+
+// ---------------------------------------------------------------------------
+// 右键菜单
+// ---------------------------------------------------------------------------
 
 type GuideTreeActions = {
   requestFocus: (node: GuideNodeData) => void;
@@ -34,85 +50,97 @@ function buildMenuItems(
   const baseItems: NodeMenuItem[] = [
     {
       label: "聚焦此处",
-      onSelect: node => treeActions.requestFocus(node),
+      onSelect: (node) => treeActions.requestFocus(node),
     },
     {
       label: "展开一层子结点",
-      onSelect: node => treeActions.expandChildren(node),
+      onSelect: (node) => treeActions.expandChildren(node),
     },
     {
       label: "展开全部子结点",
-      onSelect: node => treeActions.dfsExpand(node),
+      onSelect: (node) => treeActions.dfsExpand(node),
     },
     {
       label: "收起结点",
-      onSelect: node => treeActions.collapse(node),
+      onSelect: (node) => treeActions.collapse(node),
     },
     {
       label: "收起全部子结点",
-      onSelect: node => treeActions.collapseChildren(node),
-    }
+      onSelect: (node) => treeActions.collapseChildren(node),
+    },
   ];
+
   let items: NodeMenuItem[];
   switch (node.kind) {
     case "Module":
-      items = baseItems.filter(item => item.label !== "收起结点");
+      items = baseItems.filter((item) => item.label !== "收起结点");
       break;
-    case "Func": case "GlobalVar":
+    case "Func":
+    case "GlobalVar":
     case "Block":
-    case "NormalInst": case "TerminatorInst": case "PhiInst": {
+    case "NormalInst":
+    case "TerminatorInst":
+    case "PhiInst":
       items = baseItems;
       break;
-    }
     default:
-      items = [{
-        label: "聚焦此处",
-        onSelect: node => treeActions.requestFocus(node),
-      }];
+      items = [
+        {
+          label: "聚焦此处",
+          onSelect: (node) => treeActions.requestFocus(node),
+        },
+      ];
       break;
   }
 
+  // 图类型切换
   switch (node.kind) {
     case "Module":
       items.push({
         label: "显示函数调用图",
-        onSelect(_) { graphStore.setGraphType({ type: "CallGraph" }) },
+        onSelect(_) {
+          graphStore.setGraphType({ type: "CallGraph" });
+        },
       });
       break;
     case "Func": {
       const irObj = node.irObject;
-      if (irObj.type === "FuncHeader" || irObj.type === "FuncArg") {
-        // 这两种节点没有对应的 IR 实体, 无法提供特定于实体的菜单项.
-        break;
-      }
+      if (irObj.type === "FuncHeader" || irObj.type === "FuncArg") break;
       if (irObj.type !== "Global")
         throw new Error("Func node with non-Global IR object");
-      items.push(...[
+      items.push(
         {
           label: "显示 CFG",
-          onSelect(_: GuideNodeData) { graphStore.setGraphType({ type: "FuncCfg", func: irObj.value }) }
+          onSelect(_: GuideNodeData) {
+            graphStore.setGraphType({ type: "FuncCfg", func: irObj.value });
+          },
         },
         {
           label: "显示支配树",
-          onSelect(_: GuideNodeData) { graphStore.setGraphType({ type: "FuncDom", func: irObj.value }) }
-        }
-      ]);
+          onSelect(_: GuideNodeData) {
+            graphStore.setGraphType({ type: "FuncDom", func: irObj.value });
+          },
+        },
+      );
       break;
     }
     case "Block": {
       const irObj = node.irObject;
       if (irObj.type === "BlockIdent") {
-        // 这类节点没有对应的 Block 实体, 无法提供特定于实体的菜单项.
-        return [{
-          label: "聚焦此处",
-          onSelect: node => treeActions.requestFocus(node),
-        }];
+        return [
+          {
+            label: "聚焦此处",
+            onSelect: (node) => treeActions.requestFocus(node),
+          },
+        ];
       }
       if (irObj.type !== "Block")
         throw new Error("Block node with non-Block IR object");
       items.push({
         label: "显示 DFG",
-        onSelect(_: GuideNodeData) { graphStore.setGraphType({ type: "BlockDfg", block: irObj.value }) }
+        onSelect(_: GuideNodeData) {
+          graphStore.setGraphType({ type: "BlockDfg", block: irObj.value });
+        },
       });
       break;
     }
@@ -124,76 +152,158 @@ function buildMenuItems(
         throw new Error("Inst node with non-Inst IR object");
       items.push({
         label: "显示 Def-Use 图",
-        onSelect(_: GuideNodeData) { graphStore.setGraphType({ type: "DefUse", center: irObj.value }) }
+        onSelect(_: GuideNodeData) {
+          graphStore.setGraphType({ type: "DefUse", center: irObj.value });
+        },
       });
+      break;
     }
   }
   return items;
 }
 
+// ---------------------------------------------------------------------------
+// 空树占位
+// ---------------------------------------------------------------------------
+
+function emptyPlaceholder(): [GuideRFNode[], Edge[]] {
+  return [
+    [
+      {
+        type: "GuideNode",
+        id: "empty",
+        data: {
+          id: "empty",
+          irObject: { type: "Module" },
+          label: "错误: 无法构建引导树",
+          kind: "Module",
+          focusClass: "NotFocused",
+          children: [],
+        } as GuideNodeExpand,
+        position: { x: 0, y: 0 },
+        width: 240,
+        height: 52,
+      },
+    ],
+    [],
+  ];
+}
+
+const guideNodeTypes = {
+  GuideNode: GuideViewNode,
+};
+
+// ---------------------------------------------------------------------------
+// GuideView 组件
+// ---------------------------------------------------------------------------
+
 export default function GuideView() {
   const irState = useIRStore();
   const graphStore = useGraphState();
-  const controllerRef = useRef<GuideTreeController>(createGuideTreeController());
-  const pendingRootRef = useRef<GuideNodeExpand | null>(null);
-  const [revision, bumpRevision] = useReducer((x: number) => x + 1, 0);
+  const controllerRef = useRef<GuideTreeController>(
+    createGuideTreeController(),
+  );
   const [menu, setMenu] = useState<NodeMenuProps | null>(null);
 
+  // ── 树根状态 ─────────────────────────────────────────────────────
+  const [treeRoot, setTreeRoot] = useState<GuideNodeExpand | null>(null);
+  const skipRefreshRef = useRef(false);
+
+  // ── 生命周期 ─────────────────────────────────────────────────────
   useEffect(() => {
+    const control = controllerRef.current;
     return () => {
-      disposeGuideTreeController(controllerRef.current);
+      disposeGuideTreeController(control);
     };
   }, []);
 
-  const handleRequestFocus = useCallback((node: GuideNodeData) => {
-    const result = requestFocusNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  // 外部驱动的树刷新：焦点变更、模块替换。
+  useEffect(() => {
+    if (skipRefreshRef.current) {
+      skipRefreshRef.current = false;
+      return;
+    }
+    if (!irState.module) return;
+    const root = refreshSameModule(controllerRef.current, irState).root;
+    setTreeRoot(root);
+  }, [irState, irState.focus, irState.module]);
 
-  const handleExpandChildren = useCallback((node: GuideNodeData) => {
-    const result = expandChildrenNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  // ── handler：展开 / 收起 / 聚焦 ──────────────────────────────────
 
-  const handleExpandOne = useCallback((node: GuideNodeData) => {
-    const result = expandNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  const handleRequestFocus = useCallback(
+    (node: GuideNodeData) => {
+      const result = requestFocusNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
 
-  const handleDfsExpand = useCallback((node: GuideNodeData) => {
-    const result = dfsExpandNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  const handleExpandChildren = useCallback(
+    (node: GuideNodeData) => {
+      const result = expandChildrenNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
 
-  const handleCollapse = useCallback((node: GuideNodeData) => {
-    const result = collapseNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  const handleExpandOne = useCallback(
+    (node: GuideNodeData) => {
+      const result = expandNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
 
-  const handleCollapseChildren = useCallback((node: GuideNodeData) => {
-    const result = collapseChildrenNode(controllerRef.current, irState, node);
-    pendingRootRef.current = result.root;
-    bumpRevision();
-  }, [irState]);
+  const handleDfsExpand = useCallback(
+    (node: GuideNodeData) => {
+      const result = dfsExpandNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
 
-  const treeActions: GuideTreeActions = {
-    requestFocus: handleRequestFocus,
-    expandChildren: handleExpandChildren,
-    dfsExpand: handleDfsExpand,
-    collapse: handleCollapse,
-    collapseChildren: handleCollapseChildren,
-  };
+  const handleCollapse = useCallback(
+    (node: GuideNodeData) => {
+      const result = collapseNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
 
-  const [nodes, edges] = useMemo<[GuideRFNode[], Edge[]]>(() => {
-    const pendingRoot = pendingRootRef.current;
-    pendingRootRef.current = null;
-    const root = pendingRoot ?? refreshSameModule(controllerRef.current, irState).root;
-    const [newNodes, newEdges] = collectGuideTree(root, {
+  const handleCollapseChildren = useCallback(
+    (node: GuideNodeData) => {
+      const result = collapseChildrenNode(controllerRef.current, irState, node);
+      skipRefreshRef.current = true;
+      setTreeRoot(result.root);
+    },
+    [irState],
+  );
+
+  const treeActions = useMemo<GuideTreeActions>(
+    () => ({
+      requestFocus: handleRequestFocus,
+      expandChildren: handleExpandChildren,
+      dfsExpand: handleDfsExpand,
+      collapse: handleCollapse,
+      collapseChildren: handleCollapseChildren,
+    }),
+    [
+      handleRequestFocus,
+      handleExpandChildren,
+      handleDfsExpand,
+      handleCollapse,
+      handleCollapseChildren,
+    ],
+  );
+
+  // ── 回调包（通过 Context 注入节点，而非塞进 data） ──────────────
+  const handlers = useMemo<GuideNodeHandlers>(
+    () => ({
       onFocus: handleRequestFocus,
       onToggle: (node) => {
         if (node.children) {
@@ -210,68 +320,66 @@ export default function GuideView() {
           x: event.clientX,
           y: event.clientY,
           node: rowNode,
-          onClose: () => setMenu(null)
+          onClose: () => setMenu(null),
         });
       },
-    });
-    if (newNodes.length === 0) {
-      return [[{
-        type: "GuideNode",
-        id: "empty",
-        data: {
-          id: "empty",
-          irObject: { type: "Module" },
-          label: "错误: 无法构建引导树",
-          kind: "Module",
-          focusClass: "NotFocused",
-          children: [],
-          onFocus: () => { },
-          onToggle: () => { },
-          onRowContextMenu(event, _) { event.stopPropagation(); },
-        },
-        position: { x: 0, y: 0 },
-        width: 240,
-        height: 52,
-      }], []];
-    }
+    }),
+    [
+      handleRequestFocus,
+      handleExpandOne,
+      handleCollapse,
+      treeActions,
+      graphStore,
+    ],
+  );
+
+  // ── 纯计算：GuideNodeExpand → React Flow nodes / edges ───────────
+  const [nodes, edges] = useMemo<[GuideRFNode[], Edge[]]>(() => {
+    if (!treeRoot) return emptyPlaceholder();
+
+    const [newNodes, newEdges] = collectGuideTree(treeRoot);
+
+    if (newNodes.length === 0) return emptyPlaceholder();
     return [newNodes, newEdges];
-  }, [irState, revision, handleRequestFocus, handleExpandOne, handleCollapse]);
+  }, [treeRoot]);
 
   const buildMenuItemsCb = useCallback(
     (node: GuideNodeData) => buildMenuItems(node, treeActions, graphStore),
-    [treeActions, graphStore]
+    [treeActions, graphStore],
   );
 
+  // ── 渲染 ─────────────────────────────────────────────────────────
   return (
     <div style={{ width: "100%", height: "100%", background: "#fff" }}>
       <ReactFlowProvider>
-        <ReactFlow
-          nodeTypes={guideNodeTypes}
-          nodes={nodes}
-          edges={edges}
-          onNodeDoubleClick={(event, node) => {
-            event.preventDefault();
-            node.data.onFocus(node.data);
-          }}
-          onNodeContextMenu={(event, node) => {
-            event.preventDefault();
-            const menuItems = buildMenuItemsCb(node.data);
-            setMenu({
-              items: menuItems,
-              x: event.clientX,
-              y: event.clientY,
-              node: node.data,
-              onClose: () => setMenu(null)
-            });
-          }}
-          onClick={() => setMenu(null)}
-          fitView
-        >
-          <Background id="io.medihbt.remusysLens.GuideView" />
-          <Controls />
-        </ReactFlow>
-        {menu && (<NodeMenu {...menu} />)}
-
+        <GuideHandlersContext.Provider value={handlers}>
+          <ReactFlow
+            nodeTypes={guideNodeTypes}
+            nodes={nodes}
+            edges={edges}
+            onNodeDoubleClick={(event, node) => {
+              event.preventDefault();
+              handlers.onFocus(node.data);
+            }}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault();
+              const menuItems = buildMenuItemsCb(node.data);
+              setMenu({
+                items: menuItems,
+                x: event.clientX,
+                y: event.clientY,
+                node: node.data,
+                onClose: () => setMenu(null),
+              });
+            }}
+            onClick={() => setMenu(null)}
+            fitView
+          >
+            <Background id="io.medihbt.remusysLens.GuideView" />
+            <Controls />
+          </ReactFlow>
+          {menu && <NodeMenu {...menu} />}
+        </GuideHandlersContext.Provider>
       </ReactFlowProvider>
     </div>
   );
