@@ -172,7 +172,7 @@ impl From<CfgDfsSeq> for DfsTree {
                 nodes[seq_node.parent].children.push(dfn);
             }
         }
-        DfsTree::build_treepost(&value, nodes.as_mut_slice());
+        DfsTree::build_treepost(nodes.as_mut_slice());
         Self { seq: value, nodes }
     }
 }
@@ -195,7 +195,7 @@ impl DfsTree {
     }
 
     /// 对 `nodes` 这棵树做后序遍历, 然后填充 `nodes[].treepost_dfn`
-    fn build_treepost(_dfs_seq: &CfgDfsSeq, nodes: &mut [DfsTreeNode]) {
+    fn build_treepost(nodes: &mut [DfsTreeNode]) {
         if nodes.is_empty() {
             return;
         }
