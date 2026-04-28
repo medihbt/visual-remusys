@@ -183,10 +183,16 @@ impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
         let symbols = module.symbols.borrow();
         let begin = self.relative_pos()?;
         let mut children = IRTreeChildren::with_capacity(symbols.exported().len());
-        for &gid in symbols.exported().values() {
-            self.wrap_and_indent();
+        let exported = symbols.exported().values();
+        for (i, &gid) in exported.enumerate() {
+            if i > 0 {
+                self.wrap_and_indent();
+            } else {
+                self.write_indent()?;
+            }
             let child = self.fmt_global(gid)?;
             children.push(child);
+            self.write_char('\n')?;
         }
         let node = IRTreeNode::with_children(
             self.tree,

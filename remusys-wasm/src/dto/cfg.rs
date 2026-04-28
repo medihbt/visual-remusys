@@ -6,6 +6,7 @@ use remusys_ir::{
     opt::CfgDfsSeq,
 };
 use serde::Serialize;
+use smallvec::SmallVec;
 use smol_str::{SmolStr, format_smolstr};
 use wasm_bindgen::JsError;
 
@@ -104,36 +105,34 @@ impl FuncCfgDt {
 }
 
 struct EdgeRoleJudge {
-    pre_dfs: CfgDfsSeq,
-    post_dfs: CfgDfsSeq,
+    tree: DfsTree,
 }
 
 impl EdgeRoleJudge {
     fn new(module: &Module, func: FuncID) -> Result<Self, JsError> {
-        Ok(Self {
-            pre_dfs: CfgDfsSeq::new_pre(module, func)?,
-            post_dfs: CfgDfsSeq::new_post(module, func)?,
-        })
+        let pre_dfs = CfgDfsSeq::new_pre(module, func)?;
+        let tree = DfsTree::from(pre_dfs);
+        Ok(Self { tree })
     }
 
     fn role(&self, from: BlockID, to: BlockID) -> CfgEdgeDfsRole {
-        let Self { pre_dfs, post_dfs } = self;
         if from == to {
             return CfgEdgeDfsRole::SelfRing;
         }
 
-        let from_pre = pre_dfs.block_dfn(from);
-        let to_pre = pre_dfs.block_dfn(to);
+        let from_pre = self.tree.block_dfn(from);
+        let to_pre = self.tree.block_dfn(to);
 
         // Tree edge requires direct DFS parent relation, not only ancestor relation.
-        if pre_dfs.nodes[to_pre].parent == from_pre {
+        if self.tree.parent(to_pre) == from_pre {
             return CfgEdgeDfsRole::Tree;
         }
 
-        let from_post = post_dfs.block_dfn(from);
-        let to_post = post_dfs.block_dfn(to);
+        let from_post = self.tree.treepost_dfn(from_pre);
+        let to_post = self.tree.treepost_dfn(to_pre);
 
-        // In this post-order indexing, ancestors appear later than descendants.
+        // 祖先在后序遍历中出现得更晚（post-dfn 更大）。
+        // pre-dfn 与 post-dfn 均来自同一棵 DFS 树，保证了语义一致性。
         let to_is_ancestor_of_from = to_pre < from_pre && to_post > from_post;
         if to_is_ancestor_of_from {
             return CfgEdgeDfsRole::Back;
@@ -148,6 +147,73 @@ impl EdgeRoleJudge {
     }
 
     fn node_len(&self) -> usize {
-        self.pre_dfs.nodes.len()
+        self.tree.node_len()
+    }
+}
+
+#[derive(Default, Clone)]
+struct DfsTreeNode {
+    treepost_dfn: usize,
+    children: SmallVec<[usize; 4]>,
+}
+
+/// 原来的 pre-dfs + post-dfs 可能导致构建出的两个 DFS 树不一致, 这里统一采用前序 DFS 树.
+/// 后序 DFN 数值通过直接在这棵树上遍历得到.
+struct DfsTree {
+    seq: CfgDfsSeq,
+    nodes: Vec<DfsTreeNode>,
+}
+
+impl From<CfgDfsSeq> for DfsTree {
+    fn from(value: CfgDfsSeq) -> Self {
+        let mut nodes = vec![DfsTreeNode::default(); value.nodes.len()];
+        for (dfn, seq_node) in value.nodes.iter().enumerate() {
+            if seq_node.parent != CfgDfsSeq::NULL_PARENT {
+                nodes[seq_node.parent].children.push(dfn);
+            }
+        }
+        DfsTree::build_treepost(&value, nodes.as_mut_slice());
+        Self { seq: value, nodes }
+    }
+}
+
+impl DfsTree {
+    pub fn block_dfn(&self, block: BlockID) -> usize {
+        self.seq.block_dfn(block)
+    }
+
+    pub fn parent(&self, dfn: usize) -> usize {
+        self.seq.nodes[dfn].parent
+    }
+
+    pub fn treepost_dfn(&self, dfn: usize) -> usize {
+        self.nodes[dfn].treepost_dfn
+    }
+
+    pub fn node_len(&self) -> usize {
+        self.seq.nodes.len()
+    }
+
+    /// 对 `nodes` 这棵树做后序遍历, 然后填充 `nodes[].treepost_dfn`
+    fn build_treepost(_dfs_seq: &CfgDfsSeq, nodes: &mut [DfsTreeNode]) {
+        if nodes.is_empty() {
+            return;
+        }
+        // 根结点在 pre-dfn 0（入口基本块总是第一个被访问）。
+        // 迭代后序遍历：(pre_dfn, children_visited)
+        let mut stk = vec![(0usize, false)];
+        let mut post_dfn: usize = 0;
+        while let Some((dfn, visited)) = stk.pop() {
+            if visited {
+                nodes[dfn].treepost_dfn = post_dfn;
+                post_dfn += 1;
+            } else {
+                stk.push((dfn, true));
+                // 逆序压入子结点，保证左->右的处理顺序
+                for i in (0..nodes[dfn].children.len()).rev() {
+                    stk.push((nodes[dfn].children[i], false));
+                }
+            }
+        }
     }
 }
