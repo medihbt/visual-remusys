@@ -46,7 +46,7 @@ import type {
   IRObjPath,
   IRTreeObjID,
 } from "remusys-wasm";
-import { IRExpandTree } from "remusys-wasm";
+import { IRExpandTree, ModuleInfo } from "remusys-wasm";
 
 import { sliceValidObjPath, type IRState } from "../ir/state";
 
@@ -121,14 +121,14 @@ export function isGuideNodeExpand(
   return "children" in node && node.children !== undefined;
 }
 function buildGuideTreeFromWasm(
-  irStore: IRState,
+  module: ModuleInfo,
   root: GuideNodeData,
   focusPath: IRObjPath,
 ): GuideTreeBuildResult {
   if (!isGuideNodeExpand(root)) {
     throw new Error("root node must be an expanded node");
   }
-  const nextFocusPath = sliceValidObjPath(irStore.getModule(), focusPath);
+  const nextFocusPath = sliceValidObjPath(module, focusPath);
   connectGuideTree(root);
   return { root, nextFocusPath };
 }
@@ -149,19 +149,15 @@ export function pathOfNode(node: GuideNodeData): IRObjPath {
 }
 
 function reloadTreeWithWasm(
-  irStore: IRState,
+  module: ModuleInfo,
   expandTree: IRExpandTree,
   requestedFocusPath: IRObjPath,
 ): GuideTreeBuildResult {
-  const module = irStore.getModule();
   const nextFocusPath = ensureNonEmptyPath(
     sliceValidObjPath(module, requestedFocusPath),
   );
   const root = expandTree.load_tree(module, nextFocusPath);
-  const res = buildGuideTreeFromWasm(irStore, root, nextFocusPath);
-  // irStore 自己内部会做一次路径相等性检查, 避免循环状态更新
-  irStore.setFocus(res.nextFocusPath);
-  return res;
+  return buildGuideTreeFromWasm(module, root, nextFocusPath);
 }
 
 function ensureExpandTree(
@@ -188,7 +184,11 @@ export function refreshSameModule(
   const { moduleId, expandTree } = ensureExpandTree(irStore, controller);
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
-  return reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore));
+  return reloadTreeWithWasm(
+    irStore.getModule(),
+    expandTree,
+    getGlobalFocusPath(irStore),
+  );
 }
 
 /** 重新编译/重载 Module 后的硬重置入口。 */
@@ -200,7 +200,7 @@ export function resetForNewModule(
   const moduleId = module.get_id();
   const expandTree = IRExpandTree.new(module);
   const resetFocus = clonePath(MODULE_PATH);
-  const result = reloadTreeWithWasm(irStore, expandTree, resetFocus);
+  const result = reloadTreeWithWasm(module, expandTree, resetFocus);
   controller.expandTree?.free();
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
@@ -220,7 +220,11 @@ export function expandNode(
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
   return {
-    ...reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore)),
+    ...reloadTreeWithWasm(
+      irStore.getModule(),
+      expandTree,
+      getGlobalFocusPath(irStore),
+    ),
     resolvedPath: path,
   };
 }
@@ -281,7 +285,11 @@ export function collapseNode(
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
   return {
-    ...reloadTreeWithWasm(irStore, expandTree, getGlobalFocusPath(irStore)),
+    ...reloadTreeWithWasm(
+      irStore.getModule(),
+      expandTree,
+      getGlobalFocusPath(irStore),
+    ),
     resolvedPath: collapsePath,
   };
 }
@@ -325,7 +333,7 @@ export function requestFocusPath(
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
   return {
-    ...reloadTreeWithWasm(irStore, expandTree, nextFocusPath),
+    ...reloadTreeWithWasm(irStore.module, expandTree, nextFocusPath),
     resolvedPath: nextFocusPath,
   };
 }
