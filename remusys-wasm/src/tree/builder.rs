@@ -746,6 +746,10 @@ impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
         Ok(IRTreeNodeID::allocate(self.tree, node))
     }
 
+    fn inst_nameable(&self, inst: &InstObj) -> bool {
+        inst.has_users(self.module) || inst.get_valtype() != ValTypeID::Void
+    }
+
     fn do_fmt_inst(
         &mut self,
         inst_id: InstID,
@@ -755,7 +759,9 @@ impl<'ir, 'name> IRTreeBuilder<'ir, 'name> {
         let begin_pos = self.relative_pos()?;
         self.begin_pos();
 
-        if let Some(name) = self.try_local_name(inst_id)? {
+        if let Some(name) = self.try_local_name(inst_id)?
+            && self.inst_nameable(inst)
+        {
             write!(self, "%{name} = ")?;
         }
         let mut should_emit_node = true;

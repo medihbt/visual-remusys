@@ -8,4 +8,3 @@ edition = "2024"
 
 [workspace]
 members = ["remusys-ir", "remusys-ir-parser", "remusys-lang", "remusys-wasm"]
-

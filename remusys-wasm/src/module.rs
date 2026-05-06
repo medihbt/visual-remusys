@@ -62,7 +62,19 @@ pub struct ModuleInfo {
 impl ModuleInfo {
     pub(crate) fn compile_from_ir(source: &str) -> Result<Self, JsError> {
         use remusys_ir_parser::{ModuleWithInfo, source_to_full_ir};
-        let ModuleWithInfo { module, namemap } = source_to_full_ir(source)?;
+        let ModuleWithInfo { module, namemap } = match source_to_full_ir(source) {
+            Ok(info) => info,
+            Err(e) => {
+                let mut line_offset: Vec<usize> = Vec::new();
+                let mut pos = 0;
+                for line in source.lines() {
+                    line_offset.push(pos);
+                    pos += line.len() + 1; // +1 for the newline
+                }
+                let e = e.dump_html_string(source, &line_offset);
+                return Err(JsError::new(&e));
+            }
+        };
         Self::from_module(module, namemap)
     }
     pub(crate) fn compile_from_sysy(source: &str) -> Result<Self, JsError> {

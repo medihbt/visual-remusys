@@ -464,6 +464,12 @@ impl AstNode for PhiAst {
             // comma between value and label
             parser.advance_exact(&[FinalToken::Comma])?;
 
+            // skip word "label" if exists
+            // LLVM IR allows both `phi i32 [ %val, %bb ]` and `phi i32 [ %val, label %bb ]`
+            if parser.peek0_match(FinalToken::lit_word("label"))?.0 {
+                parser.advance_n(1)?;
+            }
+
             // parse label, must be local (e.g. %label)
             let label = Ident::parse(parser)?;
             if label.kind != IdentKind::Local {
@@ -580,7 +586,7 @@ impl AstNode for GEPAst {
         let mut indices: Vec<TypeValue> = Vec::new();
 
         loop {
-            if let (FinalToken::Comma, _) = parser.peek0()? {
+            let (FinalToken::Comma, _) = parser.peek0()? else {
                 break;
             };
             parser.advance_n(1)?;

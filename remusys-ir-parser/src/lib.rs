@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::{
     ast::{AstNode, ModuleAst},
     irgen::{IRGen, IRGenErr},
@@ -29,6 +31,43 @@ impl From<IRParseErr> for CompileErr {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ErrSrc<'s> {
+    lines_source: &'s str,
+    highlight: Range<usize>,
+}
+impl<'s> ErrSrc<'s> {
+    pub fn new(lines_source: &'s str, highlight: Range<usize>) -> Self {
+        Self {
+            lines_source,
+            highlight,
+        }
+    }
+
+    pub fn to_vt_string(&self) -> String {
+        let ErrSrc {
+            lines_source,
+            highlight,
+        } = self;
+        let before = &lines_source[..highlight.start];
+        let underline = &lines_source[highlight.clone()];
+        let after = &lines_source[highlight.end..];
+        format!("{before}\x1b[04;31m{underline}\x1b[0m{after}")
+    }
+    pub fn to_html_string(&self) -> String {
+        let ErrSrc {
+            lines_source,
+            highlight,
+        } = self;
+        let before = &lines_source[..highlight.start];
+        let underline = &lines_source[highlight.clone()];
+        let after = &lines_source[highlight.end..];
+        format!(
+            "{before}<span style=\"text-decoration:underline; color:red\">{underline}</span>{after}"
+        )
+    }
+}
+
 impl CompileErr {
     pub fn get_span(&self) -> logos::Span {
         match self {
@@ -37,7 +76,7 @@ impl CompileErr {
         }
     }
 
-    pub fn get_lines_source<'a>(&self, source: &'a str, line_poses: &[usize]) -> &'a str {
+    pub fn get_lines_source<'a>(&self, source: &'a str, line_poses: &[usize]) -> ErrSrc<'a> {
         use logos::Span;
         let Span {
             start: start_off,
@@ -56,12 +95,22 @@ impl CompileErr {
             .get(end_line + 1)
             .copied()
             .unwrap_or(source.len());
-        &source[start_pos..end_pos]
+        ErrSrc {
+            lines_source: &source[start_pos..end_pos],
+            highlight: (start_off - start_pos)..(end_off - start_pos),
+        }
     }
 
-    pub fn dump_string(&self, source: &str, line_poses: &[usize]) -> String {
+    pub fn dump_vt_string(&self, source: &str, line_poses: &[usize]) -> String {
         let lines_source = self.get_lines_source(source, line_poses);
+        let lines_source = lines_source.to_vt_string();
         format!("{self}\nAt source:\n{lines_source}")
+    }
+
+    pub fn dump_html_string(&self, source: &str, line_poses: &[usize]) -> String {
+        let lines_source = self.get_lines_source(source, line_poses);
+        let lines_source = lines_source.to_html_string();
+        format!("{self}<br>At source:<br>{lines_source}")
     }
 }
 
@@ -93,7 +142,9 @@ pub fn source_to_full_ir(source: &str) -> Result<ModuleWithInfo, CompileErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use remusys_ir::ir::{FuncClone, FuncID, IRSerializer, IRWriteOption, ISubGlobalID, SerializeIR};
+    use remusys_ir::ir::{
+        FuncClone, FuncID, IRSerializer, IRWriteOption, ISubGlobalID, SerializeIR,
+    };
     use smallvec::SmallVec;
     use std::path::PathBuf;
 
@@ -126,7 +177,7 @@ mod tests {
         match source_to_ir(&source) {
             Ok(m) => m,
             Err(e) => {
-                let e = e.dump_string(&source, &source_map);
+                let e = e.dump_vt_string(&source, &source_map);
                 panic!("Failed to compile example source file {source_path:?}: {e}")
             }
         }
@@ -221,12 +272,16 @@ swap_ab:
 exit:
     ret void
 }"#;
-        let ModuleWithInfo { mut module, namemap } = source_to_full_ir(source).unwrap();
+        let ModuleWithInfo {
+            mut module,
+            namemap,
+        } = source_to_full_ir(source).unwrap();
         module.begin_gc().finish();
         let mut ser = IRSerializer::new_buffered(&module, &namemap);
         let main_func = module.get_global_by_name("main").unwrap();
         ser.fmt_func_header(FuncID::raw_from(main_func)).unwrap();
         let swap_max_func = module.get_global_by_name("swap_max").unwrap();
-        ser.fmt_func_header(FuncID::raw_from(swap_max_func)).unwrap();
+        ser.fmt_func_header(FuncID::raw_from(swap_max_func))
+            .unwrap();
     }
 }

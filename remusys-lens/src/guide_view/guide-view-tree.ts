@@ -333,7 +333,7 @@ export function requestFocusPath(
   controller.moduleId = moduleId;
   controller.expandTree = expandTree;
   return {
-    ...reloadTreeWithWasm(irStore.module, expandTree, nextFocusPath),
+    ...reloadTreeWithWasm(irStore.module!, expandTree, nextFocusPath),
     resolvedPath: nextFocusPath,
   };
 }
